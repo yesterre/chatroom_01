@@ -1,0 +1,25 @@
+# build
+build/
+bin/
+
+# object files
+*.o
+*.obj
+
+# executables
+*.out
+*.exe
+a.out
+chatroom*
+
+# logs
+*.log
+
+# vscode
+.vscode/
+
+# cmake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
