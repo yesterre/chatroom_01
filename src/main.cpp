@@ -1,18 +1,15 @@
 #include <iostream>
 #include "user.h"
+#include "message.h"
 
 int main() {
-    User user1;
-    User user2(1, "Alice");
+    User user1(1, "Alice");
 
-    std::cout << "user1 id: " << user1.getId() << std::endl;
-    std::cout << "user1 name: " << user1.getName() << std::endl;
+    Message msg(1, "Hello everyone!", "2026-03-16");
 
-    std::cout << "user2 id: " << user2.getId() << std::endl;
-    std::cout << "user2 name: " << user2.getName() << std::endl;
-
-    user2.setName("Bob");
-    std::cout << "user2 new name: " << user2.getName() << std::endl;
+    std::cout << "sender id: " << msg.getSenderId() << std::endl;
+    std::cout << "content: " << msg.getContent() << std::endl;
+    std::cout << "time: " << msg.getTime() << std::endl;
 
     return 0;
 }

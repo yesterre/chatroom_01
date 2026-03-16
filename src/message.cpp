@@ -6,7 +6,7 @@ Message::Message(){
     time = "";
 }
 
-Message::Message(int senderId, std::string content, std::string time){
+Message::Message(int senderId, const std::string& content, const std::string& time){
     this->senderId = senderId;
     this->content = content;
     this->time = time;
