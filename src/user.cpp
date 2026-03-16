@@ -5,7 +5,7 @@ User::User(){
     name = "unknown";
 }
 
-User::User(int id, const std::string&name){
+User::User(int id, const std::string& name){
     this->id = id;
     this->name = name;
 }

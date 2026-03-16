@@ -10,7 +10,7 @@ private:
 
 public:
     User();    //默认构造函数
-    User(int id, std::string name);    //带参数的构造函数
+    User(int id, const std::string& name);    //带参数的构造函数
 
     int getId() const;
     std::string getName() const;
