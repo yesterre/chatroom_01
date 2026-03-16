@@ -1,4 +1,4 @@
-#ifndef USER_H
+#ifndef USER_H   //防止头文件被重复包含
 #define USER_H
 
 #include <string>
