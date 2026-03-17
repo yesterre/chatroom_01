@@ -2,7 +2,7 @@
 #include <iostream>
 
 void ChatRoom::addUser(const User& user){
-    users.push_back(user);
+    users.push_back(user);    //把user添加到名为users的vector中
 }
 
 void ChatRoom::sendMessage(const Message& msg){
@@ -10,7 +10,9 @@ void ChatRoom::sendMessage(const Message& msg){
 }
 
 void ChatRoom::showMessages() const {
-    for (const auto& msg : messages)
+    //范围 for 循环
+    //auto 代表编译器自动推断变量类型，即自动判断messages 里是 Message，auto=Message。& 代表引用，const 代表只读
+    for (const auto& msg : messages)  //把 messages 里的每一条 Message 拿出来（不复制、不修改），依次叫做 msg 来使用
     {
         std::cout << "User" <<msg.getSenderId()
                   <<"：" <<msg.getContent() 

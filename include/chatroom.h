@@ -7,7 +7,7 @@
 
 class ChatRoom {
 private:
-    std::vector<User> users;
+    std::vector<User> users;  //定义了一个名字叫 users 的容器，里面可以存很多个 User 对象
     std::vector<Message> messages;
 
 public:
