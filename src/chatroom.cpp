@@ -20,3 +20,12 @@ void ChatRoom::showMessages() const {
                   << std::endl;
     }
 }
+
+bool ChatRoom::hasUser(int userId) const {
+    for (const auto& user : users){
+        if (user.getId() == userId){
+            return true;
+        }
+    }
+    return false;
+}
