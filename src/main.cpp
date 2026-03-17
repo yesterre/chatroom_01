@@ -1,15 +1,22 @@
 #include <iostream>
-#include "user.h"
-#include "message.h"
+#include "chatroom.h"
 
 int main() {
-    User user1(1, "Alice");
+    ChatRoom room;
 
-    Message msg(1, "Hello everyone!", "2026-03-16");
+    User u1(1, "Alice");
+    User u2(2, "Bob");
 
-    std::cout << "sender id: " << msg.getSenderId() << std::endl;
-    std::cout << "content: " << msg.getContent() << std::endl;
-    std::cout << "time: " << msg.getTime() << std::endl;
+    room.addUser(u1);
+    room.addUser(u2);
+
+    Message m1(1, "Hello!", "2026-03-17");
+    Message m2(2, "Hi Alice!", "2026-03-17");
+
+    room.sendMessage(m1);
+    room.sendMessage(m2);
+
+    room.showMessages();
 
     return 0;
 }
