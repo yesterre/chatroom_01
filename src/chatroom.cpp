@@ -3,9 +3,14 @@
 #include <fstream>
 #include <sstream>  //字符串流，用来把一整行字符串当成“输入流”来处理
 
-void ChatRoom::addUser(const User& user){
-    users.push_back(user);    //把user添加到名为users的vector中
-    saveUserToFile(user);    //把用户信息保存到文件中
+bool ChatRoom::addUser(const User& user) {
+    if (hasUser(user.getId())) {
+        return false;
+    }
+
+    users.push_back(user);
+    saveUserToFile(user);
+    return true;
 }
 
 void ChatRoom::sendMessage(const Message& msg){
@@ -132,8 +137,10 @@ void ChatRoom::loadUsersFromFile() {
         std::getline(ss, name);
 
         int id = std::stoi(idStr);
-        User user(id, name);
-        users.push_back(user);
+        if (!hasUser(id)) {
+            User user(id, name);
+            users.push_back(user);
+        }
     }
 }
 

@@ -30,9 +30,11 @@ int main() {
             std::cin >> name;
 
             User user(id, name);
-            room.addUser(user);
-
-            std::cout << "User added successfully!" << std::endl;
+            if (room.addUser(user)) {
+                std::cout << "User added successfully!" << std::endl;
+            } else {
+                std::cout << "User ID already exists. Add user failed." << std::endl;
+            }
         }
         else if (choice == 2)
         {
