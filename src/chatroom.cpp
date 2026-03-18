@@ -13,6 +13,42 @@ bool ChatRoom::addUser(const User& user) {
     return true;
 }
 
+
+/*
+users.begin()表示指向 users 第一个元素的位置。
+users.end()表示指向“最后一个元素的下一个位置”。它不是最后一个元素本身，而是一个结束标记。
+auto it = users.begin()意思是定义一个变量 it，让它一开始指向第一个用户。
+这里的 auto 表示让编译器自动推断 it 的类型。
+*/
+//这一步删掉的是内存里的用户，但还没有更新 data/users.txt
+bool ChatRoom::removeUser(int userId) {
+    for (auto it = users.begin(); it != users.end(); ++it) 
+    {   //it 是迭代器，可以先把它理解成“指向容器中某个元素的位置”
+        if (it->getId() == userId) {
+            users.erase(it);   //删除这个位置上的用户,erase 是 vector 的成员函数，参数是一个迭代器，表示要删除哪个位置上的元素
+            rewriteUsersFile();
+            return true;
+        }
+    }
+    return false;
+}
+
+//重新读取，重写用户列表
+/*没有 std::ios::app，所以它会覆盖写入。也就是先清空旧文件，再把当前 users 里的所有用户重新写进去*/
+void ChatRoom::rewriteUsersFile() const {
+    std::ofstream outfile("data/users.txt");  //创建一个叫 outfile 的文件输出流，并打开 data/users.txt 这个文件
+
+    if (!outfile) {
+        std::cout << "Failed to open file: data/users.txt" << std::endl;
+        return;
+    }
+
+    for (const auto& user : users) {
+        outfile << user.getId() << "|"
+                << user.getName() << std::endl;
+    }
+}
+
 void ChatRoom::sendMessage(const Message& msg){
     messages.push_back(msg);
     saveMessageToFile(msg);   //把消息保存到文件中

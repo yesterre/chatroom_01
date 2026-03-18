@@ -1,2 +1,2 @@
 1|Alice
-2|bob3|Zedd
+2|bob

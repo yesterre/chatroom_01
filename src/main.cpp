@@ -15,7 +15,8 @@ int main() {
         std::cout << "2. Send Message" << std::endl;
         std::cout << "3. Show Messages" << std::endl;
         std::cout << "4. Show Users" << std::endl;
-        std::cout << "5. Exit" << std::endl;
+        std::cout << "5. Remove User" << std::endl;
+        std::cout << "6. Exit" << std::endl;
         std::cout << "Enter your choice: ";
         std::cin >> choice;
 
@@ -71,6 +72,18 @@ int main() {
             room.showUsers();
         }
         else if (choice == 5)
+        {
+            int userId;
+            std::cout << "Enter user ID to remove: ";
+            std::cin >> userId;
+
+            if (room.removeUser(userId)) {
+                std::cout << "User removed successfully!" << std::endl;
+            } else {
+                std::cout << "User ID not found. Remove user failed." << std::endl;
+            }
+        }
+        else if (choice == 6)
         {
             std::cout << "Bye!" << std::endl;
             break;

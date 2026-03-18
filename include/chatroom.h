@@ -14,6 +14,7 @@ private:
 public:
     //void addUser(const User& user);   //往聊天室添加一个用户
     bool addUser(const User& user);
+    bool removeUser(int userId);  //从聊天室里删除一个用户（通过用户 ID 来删除）
     void sendMessage(const Message& msg);  //用户发送一条消息（本质就是加入 messages）
     void showMessages() const;  //打印所有聊天记录
     void showUsers() const;  //打印聊天室里所有用户的名字
@@ -25,6 +26,7 @@ public:
     
     void saveUserToFile(const User& user) const; //把用户信息保存到一个文本文件里
     void loadUsersFromFile(); //从文本文件里加载用户信息
+    void rewriteUsersFile() const;  //重写用户文件（当用户被删除时需要调用这个函数来更新用户文件）
 };
 
 #endif // CHATROOM_H
