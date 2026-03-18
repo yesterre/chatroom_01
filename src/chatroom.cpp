@@ -5,6 +5,7 @@
 
 void ChatRoom::addUser(const User& user){
     users.push_back(user);    //把user添加到名为users的vector中
+    saveUserToFile(user);    //把用户信息保存到文件中
 }
 
 void ChatRoom::sendMessage(const Message& msg){
@@ -100,3 +101,39 @@ void ChatRoom::loadMessagesFromFile()
         messages.push_back(msg);
     }
 }
+
+void ChatRoom::saveUserToFile(const User& user) const {
+    std::ofstream outfile("data/users.txt", std::ios::app);
+
+    if (!outfile) {
+        std::cout << "Failed to open file: data/users.txt" << std::endl;
+        return;
+    }
+
+    outfile << user.getId() << "|"
+            << user.getName() << std::endl;
+}
+
+void ChatRoom::loadUsersFromFile() {
+    std::ifstream infile("data/users.txt");
+
+    if (!infile) {
+        std::cout << "No user file found. Starting with empty users." << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (std::getline(infile, line)) {
+        std::stringstream ss(line);
+        std::string idStr;
+        std::string name;
+
+        std::getline(ss, idStr, '|');
+        std::getline(ss, name);
+
+        int id = std::stoi(idStr);
+        User user(id, name);
+        users.push_back(user);
+    }
+}
+

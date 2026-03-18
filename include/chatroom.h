@@ -18,8 +18,12 @@ public:
     void showUsers() const;  //打印聊天室里所有用户的名字
     bool hasUser(int userId) const; //检查聊天室里是否有某个用户（通过用户 ID 来判断）
     std::string getUserNameById(int userId) const; //通过用户 ID 获取用户名
+    
     void saveMessageToFile(const Message& msg) const; //把聊天记录保存到一个文本文件里
     void loadMessagesFromFile(); //从文本文件里加载聊天记录
+    
+    void saveUserToFile(const User& user) const; //把用户信息保存到一个文本文件里
+    void loadUsersFromFile(); //从文本文件里加载用户信息
 };
 
 #endif // CHATROOM_H

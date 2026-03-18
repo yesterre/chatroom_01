@@ -4,6 +4,7 @@
 
 int main() {
     ChatRoom room;
+    room.loadUsersFromFile();
     room.loadMessagesFromFile();
     int choice;
 
