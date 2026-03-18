@@ -66,6 +66,19 @@ void ChatRoom::showMessages() const {
     }
 }
 
+void ChatRoom::clearMessages(){
+    messages.clear();   //清空内存里的消息列表,vector的成员函数clear
+
+    std::ofstream outfile("data/messages.txt");  //打开一个输出文件流，文件路径是 data/messages.txt
+    if (!outfile){
+        std::cout << "Failed to open file: data/messages.txt" << std::endl;
+        return;
+    }
+
+    outfile.close();
+    std::cout << "All messages have been cleared." << std::endl;
+}
+
 bool ChatRoom::hasUser(int userId) const {
     for (const auto& user : users){
         if (user.getId() == userId){

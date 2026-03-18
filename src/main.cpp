@@ -16,7 +16,8 @@ int main() {
         std::cout << "3. Show Messages" << std::endl;
         std::cout << "4. Show Users" << std::endl;
         std::cout << "5. Remove User" << std::endl;
-        std::cout << "6. Exit" << std::endl;
+        std::cout << "6. Clear Messages" << std::endl;
+        std::cout << "7. Exit" << std::endl;
         std::cout << "Enter your choice: ";
         std::cin >> choice;
 
@@ -84,6 +85,10 @@ int main() {
             }
         }
         else if (choice == 6)
+        {
+            room.clearMessages();
+        }
+        else if (choice == 7)
         {
             std::cout << "Bye!" << std::endl;
             break;
