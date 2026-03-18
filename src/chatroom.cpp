@@ -38,3 +38,17 @@ std::string ChatRoom::getUserNameById(int userId) const {
     }
     return "Unknown";
 }
+
+void ChatRoom::showUsers() const {
+    if (users.empty()){   //判断 users 这个 vector 是不是空的
+        std::cout << "No users in the chatroom." << std::endl;
+        return;
+    }
+
+    std::cout << "User list:" << std::endl;
+    for (const auto& user : users){
+        std::cout <<"ID:" << user.getId()
+                  <<", Name:" << user.getName()
+                  << std::endl;
+    }
+}

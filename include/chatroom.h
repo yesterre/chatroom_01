@@ -15,6 +15,7 @@ public:
     void addUser(const User& user);   //往聊天室添加一个用户
     void sendMessage(const Message& msg);  //用户发送一条消息（本质就是加入 messages）
     void showMessages() const;  //打印所有聊天记录
+    void showUsers() const;  //打印聊天室里所有用户的名字
     bool hasUser(int userId) const; //检查聊天室里是否有某个用户（通过用户 ID 来判断）
     std::string getUserNameById(int userId) const; //通过用户 ID 获取用户名
 };
