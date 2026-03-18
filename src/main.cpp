@@ -1,6 +1,18 @@
 #include <iostream>
 #include <string>
 #include "chatroom.h"
+#include <ctime>
+#include <iomanip>
+
+std::string getCurrentTime() {
+    std::time_t now = std::time(nullptr);
+    std::tm* localTime = std::localtime(&now);
+
+    char buffer[20];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", localTime);
+
+    return std::string(buffer);
+}
 
 int main() {
     ChatRoom room;
@@ -42,7 +54,6 @@ int main() {
         {
             int senderId;
             std::string content;
-            std::string time;
 
             std::cout << "Enter sender ID: ";
             std::cin >> senderId;
@@ -56,8 +67,7 @@ int main() {
             std::cout << "Enter message content: ";
             std::getline(std::cin, content);
 
-            std::cout << "Enter message time: ";
-            std::getline(std::cin, time);
+            std::string time = getCurrentTime();
 
             Message msg(senderId, content, time);
             room.sendMessage(msg);
