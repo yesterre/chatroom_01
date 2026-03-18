@@ -14,10 +14,10 @@ void ChatRoom::showMessages() const {
     //auto 代表编译器自动推断变量类型，即自动判断messages 里是 Message，auto=Message。& 代表引用，const 代表只读
     for (const auto& msg : messages)  //把 messages 里的每一条 Message 拿出来（不复制、不修改），依次叫做 msg 来使用
     {
-        std::cout << "User" <<msg.getSenderId()
+        std::cout << getUserNameById(msg.getSenderId())
                   <<"：" <<msg.getContent() 
                   <<"["<<msg.getTime()<<"]"
-                  << std::endl;
+                  << std::endl;                                                      
     }
 }
 
@@ -28,4 +28,13 @@ bool ChatRoom::hasUser(int userId) const {
         }
     }
     return false;
+}
+
+std::string ChatRoom::getUserNameById(int userId) const {
+    for (const auto& user : users){
+        if (user.getId() == userId){
+            return user.getName();
+        }
+    }
+    return "Unknown";
 }
