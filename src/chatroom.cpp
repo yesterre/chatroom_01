@@ -1,6 +1,7 @@
 #include "chatroom.h"
 #include <iostream>
 #include <fstream>
+#include <sstream>  //字符串流，用来把一整行字符串当成“输入流”来处理
 
 void ChatRoom::addUser(const User& user){
     users.push_back(user);    //把user添加到名为users的vector中
@@ -66,4 +67,36 @@ void ChatRoom::saveMessageToFile(const Message& msg) const {
     outfile << msg.getSenderId() << "|" 
             << msg.getContent() << "|" 
             << msg.getTime() << std::endl;
+}
+
+void ChatRoom::loadMessagesFromFile() 
+{
+    std::ifstream infile("data/messages.txt",std::ios::app);
+
+    if (!infile){
+        std::cout << "FNo history file found. Starting with empty messages." << std::endl;
+        return;
+    }
+
+    std::string line;
+    while (std::getline(infile, line)){
+        std::stringstream ss(line);
+        std::string senderIdstr;
+        std::string content;
+        std::string time;
+
+        /*从字符串流 ss 里读取内容。
+        第一句：读到 | 为止，得到发送者 id
+        第二句：再读到 | 为止，得到消息内容
+        第三句：读剩下的内容，得到时间
+        */
+        std::getline(ss, senderIdstr, '|');
+        std::getline(ss, content, '|');
+        std::getline(ss, time);
+
+        int senderId = std::stoi(senderIdstr); //把字符串 senderIdstr 转换成整数 senderId，如把字符串 "1" 转成整数 1
+        /*重新构造出一个消息对象，放进 messages*/
+        Message msg(senderId, content, time);
+        messages.push_back(msg);
+    }
 }
