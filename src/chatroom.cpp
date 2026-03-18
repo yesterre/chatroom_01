@@ -1,5 +1,6 @@
 #include "chatroom.h"
 #include <iostream>
+#include <fstream>
 
 void ChatRoom::addUser(const User& user){
     users.push_back(user);    //把user添加到名为users的vector中
@@ -7,6 +8,7 @@ void ChatRoom::addUser(const User& user){
 
 void ChatRoom::sendMessage(const Message& msg){
     messages.push_back(msg);
+    saveMessageToFile(msg);   //把消息保存到文件中
 }
 
 void ChatRoom::showMessages() const {
@@ -51,4 +53,17 @@ void ChatRoom::showUsers() const {
                   <<", Name:" << user.getName()
                   << std::endl;
     }
+}
+
+void ChatRoom::saveMessageToFile(const Message& msg) const {
+    std::ofstream outfile("data/messages.txt",std::ios::app);   //打开一个输出文件流，把文件路径设为 data/messages.txt
+
+    if (!outfile){
+        std::cout << "Failed to open file: data/messages.txt" << std::endl;
+        return;
+    }
+
+    outfile << msg.getSenderId() << "|" 
+            << msg.getContent() << "|" 
+            << msg.getTime() << std::endl;
 }
