@@ -1,0 +1,28 @@
+/*
+表示一个最小 TCP 服务端。
+它先只负责：
+记住监听地址和端口
+创建监听 socket
+启动服务
+跑主循环，接收一个客户端消息
+*/
+
+#pragma once   //防止头文件被重复包含
+
+#include <string>
+
+class TcpServer
+{
+    public:
+        TcpServer(const std::string& ip, int port);   //创建服务端对象时指定：监听的 IP 和监听的端口
+        ~TcpServer();  //对象销毁时做清理工作。后面主要用于关闭 socket 文件描述符，属于Linux 网络编程里的资源释放
+
+        bool start();  //启动服务端，主要是创建监听 socket，绑定地址和端口，进入监听状态
+        void run();  //服务端进入运行状态
+
+    private:
+        std::string ip_;  //保存服务端监听的 IP 地址。加下划线 _ 是常见成员变量命名习惯，表示它是类的内部成员。
+        int port_;  //保存端口号
+        int listen_fd_;  
+        //监听 socket 的文件描述符。在 Linux 里，socket 也是文件描述符的一种，所以通常用 int 保存
+}
