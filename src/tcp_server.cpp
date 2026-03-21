@@ -92,52 +92,57 @@ bool TcpServer::start()
 /*  run()：接收一个客户端请求  */
 void TcpServer::run()
 {
-    /*给 accept() 用的，用来接收客户端地址信息。*/
-    sockaddr_in client_addr{};
-    socklen_t client_len = sizeof(client_addr);
-
-    /*接受一个客户端连接：等待一个客户端来连接，如果有客户端连上，返回一个新的文件描述符 client_fd
-    注意：listen_fd_ 是监听用的，client_fd 是和具体客户端通信用的*/
-    int client_fd = accept(listen_fd_, 
-                            reinterpret_cast<sockaddr*>(&client_addr), 
-                            &client_len);
-    if (client_fd < 0)
+    while (true)  //外层循环：一直等待新客户端连接
     {
-        std::cerr << "accept() failed" << std::endl;
-        return;
-    }
+        /*给 accept() 用的，用来接收客户端地址信息。*/
+        sockaddr_in client_addr{};
+        socklen_t client_len = sizeof(client_addr);
 
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
-    std::cout << "Client connected from " << client_ip 
-              << ":" << ntohs(client_addr.sin_port) << std::endl;
-
-    /*接收客户端消息：从客户端读数据到缓冲区里。这里先用一个简单字符数组缓冲区就够了
-    */
-    char buffer[1024] = {0};
-
-    while (true) {
-        std::memset(buffer, 0, sizeof(buffer)); //每次循环前清空缓冲区，避免上次数据残留影响这次读取
-        int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
-
-        if (bytes_received < 0) {  //recv() < 0：接收出错
-            std::cerr << "recv() failed" << std::endl;
-            break; //出错了，跳出循环，准备关闭连接
-        } else if (bytes_received == 0) {  //recv() == 0：对端关闭连接了
-            std::cout << "Client disconnected." << std::endl;
-            break; //客户端断开了连接，跳出循环
+        /*接受一个客户端连接：等待一个客户端来连接，如果有客户端连上，返回一个新的文件描述符 client_fd
+        注意：listen_fd_ 是监听用的，client_fd 是和具体客户端通信用的*/
+        int client_fd = accept(listen_fd_, 
+                                reinterpret_cast<sockaddr*>(&client_addr), 
+                                &client_len);
+        if (client_fd < 0)
+        {
+            std::cerr << "accept() failed" << std::endl;
+            continue; //出错了，继续等待下一个客户端连接
         }
 
-        //recv() > 0：成功收到数据
-        buffer[bytes_received] = '\0'; //因为 recv() 收到的是字节数据，不保证自带字符串结束符，所以这里手动补一个 '\0'，便于按 C 风格字符串打印。
-        std::cout << "Client says: " << buffer << std::endl;
+        char client_ip[INET_ADDRSTRLEN];  //INET_ADDRSTRLEN 是一个系统头文件里定义好的常量，表示IPv4 地址字符串表示所需要的最大长度
+        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);  //把 client_addr.sin_addr 里的 IPv4 地址，转换成字符串，写入 client_ip 数组中，数组长度是 INET_ADDRSTRLEN
+        std::cout << "Client connected from " << client_ip 
+                << ":" << ntohs(client_addr.sin_port) << std::endl;  //ntohs() 是把网络字节序的端口号转换成主机字节序，方便打印出来看
 
-        std::string reply = "Message received by server.";  //回一条消息给客户端：给客户端发回确认消息
-        int bytes_sent = send(client_fd, reply.c_str(), reply.size(), 0);
-        if (bytes_sent < 0) {
-            std::cerr << "send() failed" << std::endl;
-            break; //出错了，跳出循环，准备关闭连接
+        /*接收客户端消息：从客户端读数据到缓冲区里。这里先用一个简单字符数组缓冲区就够了
+        */
+        char buffer[1024] = {0};
+
+        while (true)   //内层循环：和当前这个客户端持续聊天
+        {
+            std::memset(buffer, 0, sizeof(buffer)); //每次循环前清空缓冲区，避免上次数据残留影响这次读取
+            int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
+
+            if (bytes_received < 0) {  //recv() < 0：接收出错
+                std::cerr << "recv() failed" << std::endl;
+                break; //出错了，跳出循环，准备关闭连接
+            } else if (bytes_received == 0) {  //recv() == 0：对端关闭连接了
+                std::cout << "Client disconnected." << std::endl;
+                break; //客户端断开了连接，跳出循环
+            }
+
+            //recv() > 0：成功收到数据
+            buffer[bytes_received] = '\0'; //因为 recv() 收到的是字节数据，不保证自带字符串结束符，所以这里手动补一个 '\0'，便于按 C 风格字符串打印。
+            std::cout << "Client says: " << buffer << std::endl;
+
+            std::string reply = "Message received by server.";  //回一条消息给客户端：给客户端发回确认消息
+            int bytes_sent = send(client_fd, reply.c_str(), reply.size(), 0);
+            if (bytes_sent < 0) {
+                std::cerr << "send() failed" << std::endl;
+                break; //出错了，跳出循环，准备关闭连接
+            }
         }
+        close(client_fd); //关闭和这个客户端的连接
+        std::cout << "Waiting for next client..." << std::endl;
     }
-    close(client_fd); //关闭和这个客户端的连接
 }
