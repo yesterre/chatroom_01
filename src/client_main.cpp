@@ -21,7 +21,7 @@
 int main(){
     TcpClient client("127.0.0.1",8888);  //与在 server_main.cpp 里设置的服务端地址必须一致
 
-    if(!client.connect_to_server()){  //尝试连接服务端
+    if(!client.connectToServer()){  //尝试连接服务端
         std::cerr << "Failed to connect to server." << std::endl;
         return 1;
     }
