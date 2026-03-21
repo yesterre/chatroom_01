@@ -10,6 +10,8 @@
 #pragma once   //防止头文件被重复包含
 
 #include <string>
+#include <vector>
+#include <mutex>
 #include <netinet/in.h>  //包含 sockaddr_in 结构体定义
 
 class TcpServer
@@ -23,9 +25,14 @@ class TcpServer
 
     private:
         void handleClient(int client_fd, sockaddr_in client_addr);  //处理客户端连接的函数，参数是客户端的 socket 文件描述符和客户端地址信息
+        void broadcastMessage(const std::string& message, int sender_fd);  //向所有连接的客户端广播消息，参数是要广播的消息和发送者的 socket 文件描述符（可以用来排除发送者自己）
+        void removeClient(int client_fd);  //从客户端列表中移除一个客户端连接，参数是客户端的 socket 文件描述符
 
         std::string ip_;  //保存服务端监听的 IP 地址。加下划线 _ 是常见成员变量命名习惯，表示它是类的内部成员。
         int port_;  //保存端口号
         int listen_fd_;  
         //监听 socket 的文件描述符。在 Linux 里，socket 也是文件描述符的一种，所以通常用 int 保存
+
+        std::vector<int> clients_;  //保存当前连接的客户端 socket 文件描述符列表。使用 vector 是因为客户端数量不固定，可以动态增加和减少
+        std::mutex clients_mutex_;  //保护 clients_ 列表的互斥锁，确保在多线程环境下对 clients_ 的访问是安全的
 };

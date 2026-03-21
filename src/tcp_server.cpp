@@ -3,15 +3,7 @@
 析构函数
 start()
 run()
-
-accept 一个客户端
-进入循环
-    recv 一次
-    打印
-    send 一次
-直到客户端断开或出错
-close
-结束
+handleClient()
 */
 
 #include "tcp_server.h"
@@ -21,7 +13,10 @@ close
 #include <sys/socket.h>  ////为了用 socket 相关函数：socket()，bind()，listen()，accept()，send()，recv()
 #include <unistd.h>  //为了用close()，在 Linux 下关闭文件描述符靠它
 #include <cstring>  //为了用 memset()，在循环里清空缓冲区
-#include <thread>
+#include <thread>  //为了用 std::thread 创建线程处理不同客户端
+#include <vector>  //为了用 std::vector 保存当前在线客户端的 socket
+#include <mutex>  //互斥锁：为了用 std::mutex 保护 clients_，避免多线程同时访问冲突
+#include <algorithm>  //为了用 std::remove 配合 erase 从 clients_ 中移除断开的客户端
 
 /*  构造函数
 把传进来的 ip 保存到 ip_，把传进来的 port 保存到 port_，把 listen_fd_ 初始化成 -1
@@ -115,17 +110,45 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
 
             //recv() > 0：成功收到数据
             buffer[bytes_received] = '\0'; //因为 recv() 收到的是字节数据，不保证自带字符串结束符，所以这里手动补一个 '\0'，便于按 C 风格字符串打印。
-            std::cout << "[" << client_ip << ":" << ntohs(client_addr.sin_port)
-                      << "] says: " << buffer << std::endl;
+            
+            std::string message = "[" + std::string(client_ip) + ":" +
+                      std::to_string(ntohs(client_addr.sin_port)) +
+                      "] says: " + std::string(buffer);
 
-            std::string reply = "Message received by server.";  //回一条消息给客户端：给客户端发回确认消息
-            int bytes_sent = send(client_fd, reply.c_str(), reply.size(), 0);
-            if (bytes_sent < 0) {
-                std::cerr << "send() failed" << std::endl;
-                break; //出错了，跳出循环，准备关闭连接
-            }
+            std::cout << message << std::endl; //打印收到的消息，看看是什么内容
+
+            broadcastMessage(message, client_fd);
+            
         }
+        removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
         close(client_fd); //关闭和这个客户端的连接
+}
+
+//拿锁，遍历所有在线客户端，把消息发给除了发送者之外的每个人
+void TcpServer::broadcastMessage(const std::string& message, int sender_fd)
+{
+    std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全  进入这个花括号范围 -> 上锁  离开这个花括号范围 -> 自动解锁
+    
+    for (int fd : clients_) {  //对于 clients_ 里的每一个客户端命名为 fd，执行下面的代码
+        if (fd == sender_fd) { //不发回给发送者自己
+            continue; //发消息给这个客户端
+        }
+
+        int bytes_sent = send(fd, message.c_str(), message.size(), 0);
+        if (bytes_sent < 0) {
+            std::cerr << "broadcast send() failed, fd = " << fd << std::endl;
+        }
+    }
+}
+
+void TcpServer::removeClient(int client_fd)
+{
+    std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
+    /*
+    remove() 是一个算法函数，接受一个范围和一个值，把范围内等于这个值的元素都移到范围末尾，并返回第一个被移到末尾的元素的迭代器。
+    然后我们用 erase() 把这些被移到末尾的元素真正删除掉。
+    */
+    clients_.erase(std::remove(clients_.begin(), clients_.end(), client_fd), clients_.end()); //从 clients_ 中移除这个客户端的文件描述符
 }
 
 /*  run()：接收一个客户端请求  */
@@ -146,6 +169,11 @@ void TcpServer::run()  //主线程只负责 accept，每接受一个客户端连
         {
             std::cerr << "accept() failed" << std::endl;
             continue; //出错了，继续等待下一个客户端连接
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
+            clients_.push_back(client_fd); //把这个新客户端的文件描述符加入到 clients_ 列表里，方便后续广播消息时使用
         }
 
         std::thread client_thread(&TcpServer::handleClient, this, client_fd, client_addr);  //创建一个线程来处理这个客户端的通信
