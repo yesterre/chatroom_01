@@ -80,7 +80,7 @@ bool TcpClient::sendMessage(const std::string& message) {
 std::string TcpClient::receiveMessage() {
     if (sock_fd_ < 0) {
         std::cerr << "socket is not connected" << std::endl;
-        return "";
+        return "";  //一旦 recv() 出错，就会返回空字符串 ""
     }
 
     char buffer[1024] = {0};

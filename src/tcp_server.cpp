@@ -3,6 +3,15 @@
 析构函数
 start()
 run()
+
+accept 一个客户端
+进入循环
+    recv 一次
+    打印
+    send 一次
+直到客户端断开或出错
+close
+结束
 */
 
 #include "tcp_server.h"
@@ -11,6 +20,7 @@ run()
 #include <iostream>
 #include <sys/socket.h>  ////为了用 socket 相关函数：socket()，bind()，listen()，accept()，send()，recv()
 #include <unistd.h>  //为了用close()，在 Linux 下关闭文件描述符靠它
+#include <cstring>  //为了用 memset()，在循环里清空缓冲区
 
 /*  构造函数
 把传进来的 ip 保存到 ip_，把传进来的 port 保存到 port_，把 listen_fd_ 初始化成 -1
@@ -97,20 +107,37 @@ void TcpServer::run()
         return;
     }
 
+    char client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+    std::cout << "Client connected from " << client_ip 
+              << ":" << ntohs(client_addr.sin_port) << std::endl;
+
     /*接收客户端消息：从客户端读数据到缓冲区里。这里先用一个简单字符数组缓冲区就够了
     */
     char buffer[1024] = {0};
-    int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
-    
-    
-    if (bytes_received > 0)
-    {
+
+    while (true) {
+        std::memset(buffer, 0, sizeof(buffer)); //每次循环前清空缓冲区，避免上次数据残留影响这次读取
+        int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
+
+        if (bytes_received < 0) {  //recv() < 0：接收出错
+            std::cerr << "recv() failed" << std::endl;
+            break; //出错了，跳出循环，准备关闭连接
+        } else if (bytes_received == 0) {  //recv() == 0：对端关闭连接了
+            std::cout << "Client disconnected." << std::endl;
+            break; //客户端断开了连接，跳出循环
+        }
+
+        //recv() > 0：成功收到数据
         buffer[bytes_received] = '\0'; //因为 recv() 收到的是字节数据，不保证自带字符串结束符，所以这里手动补一个 '\0'，便于按 C 风格字符串打印。
         std::cout << "Client says: " << buffer << std::endl;
 
         std::string reply = "Message received by server.";  //回一条消息给客户端：给客户端发回确认消息
-        send(client_fd, reply.c_str(), reply.size(), 0);
+        int bytes_sent = send(client_fd, reply.c_str(), reply.size(), 0);
+        if (bytes_sent < 0) {
+            std::cerr << "send() failed" << std::endl;
+            break; //出错了，跳出循环，准备关闭连接
+        }
     }
-
-    close(client_fd);  //这一版 server 处理完一个 client 就结束通信，所以直接关掉。
+    close(client_fd); //关闭和这个客户端的连接
 }
