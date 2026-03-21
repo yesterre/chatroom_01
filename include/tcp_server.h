@@ -10,6 +10,7 @@
 #pragma once   //防止头文件被重复包含
 
 #include <string>
+#include <netinet/in.h>  //包含 sockaddr_in 结构体定义
 
 class TcpServer
 {
@@ -21,6 +22,8 @@ class TcpServer
         void run();  //服务端进入运行状态
 
     private:
+        void handleClient(int client_fd, sockaddr_in client_addr);  //处理客户端连接的函数，参数是客户端的 socket 文件描述符和客户端地址信息
+
         std::string ip_;  //保存服务端监听的 IP 地址。加下划线 _ 是常见成员变量命名习惯，表示它是类的内部成员。
         int port_;  //保存端口号
         int listen_fd_;  
