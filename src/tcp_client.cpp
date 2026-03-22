@@ -94,3 +94,11 @@ std::string TcpClient::receiveMessage() {
     buffer[bytes_received] = '\0'; // Null-terminate the received message
     return std::string(buffer);
 }
+
+void TcpClient::disconnect() {
+    if (sock_fd_ != -1) {
+        shutdown(sock_fd_, SHUT_RDWR);  //表示主动关闭这个 socket 的收发方向
+        close(sock_fd_);
+        sock_fd_ = -1;
+    }
+}

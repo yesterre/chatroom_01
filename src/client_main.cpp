@@ -71,8 +71,11 @@ int main()
         
         if (message == "exit") 
         {
-            running = false;  //如果用户输入 exit，就把 running 设置为 false，通知接收线程退出
-            break;
+            if (message == "exit") {
+                running = false;
+                client.disconnect();
+                break;
+            }
         }
 
         if (message.empty()) 
@@ -85,6 +88,7 @@ int main()
         {   
             std::cerr << "Failed to send message." << std::endl;
             running = false;  //如果发送消息失败，说明服务端可能断开了连接，设置 running 为 false，通知接收线程退出
+            client.disconnect();
             break;
         }
 

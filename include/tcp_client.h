@@ -18,6 +18,7 @@ class TcpClient
         bool connectToServer();  //发起连接请求，成功返回 true，失败返回 false
         bool sendMessage(const std::string& message);  //把一条字符串消息发给服务器
         std::string receiveMessage();  //从服务器接收回复内容
+        void disconnect();  //主动断开与服务器的连接
 
     private:
         std::string ip_;  //保存服务器 IP 地址
