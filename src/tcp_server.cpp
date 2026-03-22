@@ -92,13 +92,33 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
     std::cout << "Client connected from " << client_ip 
               << ":" << ntohs(client_addr.sin_port) << std::endl;  //ntohs() 是把网络字节序的端口号转换成主机字节序，方便打印出来看
 
-        //接收客户端消息：从客户端读数据到缓冲区里。这里先用一个简单字符数组缓冲区就够了
+    //接收客户端消息：从客户端读数据到缓冲区里。这里先用一个简单字符数组缓冲区就够了
     char buffer[1024] = {0};
+
+    //先接收昵称
+    std::memset(buffer, 0, sizeof(buffer)); //清空缓冲区
+    int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
+    if (bytes_received <= 0) {  //recv() <= 0：接收出错或者客户端断开连接了
+        removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
+        close(client_fd);
+        return; //出错了，直接返回，不继续处理这个客户端了
+    }
+    
+    buffer[bytes_received] = '\0'; 
+    std::string nickname = buffer; //把昵称保存到一个 std::string 里，
+
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        nicknames_[client_fd] = nickname;
+    }
+
+    std::cout << nickname << " joined the chat." << std::endl;
+    broadcastMessage("[System] " + nickname + " joined the chat.", client_fd); //广播消息，告诉其他人这个人加入了
 
         while (true)   //内层循环：和当前这个客户端持续聊天
         {
             std::memset(buffer, 0, sizeof(buffer)); //每次循环前清空缓冲区，避免上次数据残留影响这次读取
-            int bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
+            bytes_received = recv(client_fd, buffer, sizeof(buffer) - 1, 0);  //recv() 返回实际收到的字节数，或者出错时返回 -1，或者客户端断开连接时返回 0
 
             if (bytes_received < 0) {  //recv() < 0：接收出错
                 std::cerr << "recv() failed" << std::endl;
@@ -111,15 +131,19 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
             //recv() > 0：成功收到数据
             buffer[bytes_received] = '\0'; //因为 recv() 收到的是字节数据，不保证自带字符串结束符，所以这里手动补一个 '\0'，便于按 C 风格字符串打印。
             
-            std::string message = "[" + std::string(client_ip) + ":" +
-                      std::to_string(ntohs(client_addr.sin_port)) +
-                      "] says: " + std::string(buffer);
-
+            std::string message = "[" + nickname + "] says: " + std::string(buffer);
             std::cout << message << std::endl; //打印收到的消息，看看是什么内容
-
             broadcastMessage(message, client_fd);
             
         }
+
+        broadcastMessage("[System] " + nickname + " left the chat.", client_fd); 
+
+        {
+            std::lock_guard<std::mutex> lock(clients_mutex_);
+            nicknames_.erase(client_fd); //从 nicknames_ 中移除这个客户端的昵称
+        }
+
         removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
         close(client_fd); //关闭和这个客户端的连接
 }

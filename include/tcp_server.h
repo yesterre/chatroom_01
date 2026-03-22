@@ -13,6 +13,7 @@
 #include <vector>
 #include <mutex>
 #include <netinet/in.h>  //包含 sockaddr_in 结构体定义
+#include <unordered_map>
 
 class TcpServer
 {
@@ -33,6 +34,7 @@ class TcpServer
         int listen_fd_;  
         //监听 socket 的文件描述符。在 Linux 里，socket 也是文件描述符的一种，所以通常用 int 保存
 
+        std::unordered_map<int, std::string> nicknames_;  //保存客户端的昵称，键是客户端的 socket 文件描述符，值是对应的昵称。使用 unordered_map 是因为它提供了快速的查找和插入操作
         std::vector<int> clients_;  //保存当前连接的客户端 socket 文件描述符列表。使用 vector 是因为客户端数量不固定，可以动态增加和减少
         std::mutex clients_mutex_;  //保护 clients_ 列表的互斥锁，确保在多线程环境下对 clients_ 的访问是安全的
 };

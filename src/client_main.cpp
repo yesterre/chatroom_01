@@ -23,6 +23,19 @@ int main()
         return 1;
     }
 
+    std::string nickname;
+    std::cout << "Enter your nickname: ";
+    std::getline(std::cin, nickname);
+
+    if (nickname.empty()) {
+        nickname = "Anonymous";
+    }
+
+    if (!client.sendMessage(nickname)) {
+        std::cerr << "Failed to send nickname." << std::endl;
+        return 1;
+    }
+
     /*
     std::atomic<bool> 允许多个线程安全地读写这个开关。
     它现在承担的逻辑是：只要 running == true，程序继续；任何一边发现需要退出，就把它改成 false；另一边看到后也会跟着退出。
