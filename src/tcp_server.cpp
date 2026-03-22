@@ -107,9 +107,30 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
     buffer[bytes_received] = '\0'; 
     std::string nickname = buffer; //把昵称保存到一个 std::string 里，
 
+    bool nickname_exists = false;
+
     {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        nicknames_[client_fd] = nickname;
+        std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
+        for (const auto& pair : nicknames_) { //遍历当前在线客户端的昵称列表，看看有没有和这个新客户端一样的昵称
+            if (pair.second == nickname) {
+                nickname_exists = true;
+                break;
+            }
+        }
+
+        if (!nickname_exists) { //如果这个昵称不存在，就加到 nicknames_ 里
+            nicknames_[client_fd] = nickname;
+        }
+    }
+
+    if (nickname_exists)
+    {
+        std::string error_message = "[System] Nickname already taken. Please reconnect with another name.";
+        send(client_fd, error_message.c_str(), error_message.size(), 0); 
+
+        removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
+        close(client_fd);
+        return; //昵称重复了，直接返回，不继续处理这个客户端了
     }
 
     std::cout << nickname << " joined the chat." << std::endl;
