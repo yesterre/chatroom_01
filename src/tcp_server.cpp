@@ -173,7 +173,7 @@ void TcpServer::run()  //主线程只负责 accept，每接受一个客户端连
 
         {
             std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
-            clients_.push_back(client_fd); //把这个新客户端的文件描述符加入到 clients_ 列表里，方便后续广播消息时使用
+            clients_.push_back(client_fd); //把这个新客户端的文件描述符加入到 clients_ 列表里，广播消息时使用
         }
 
         std::thread client_thread(&TcpServer::handleClient, this, client_fd, client_addr);  //创建一个线程来处理这个客户端的通信

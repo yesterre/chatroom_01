@@ -11,7 +11,7 @@
 
 #include <iostream>
 #include <string>
-#include <atomic>
+#include <atomic>  //引入 atomic 头文件，使用 std::atomic 来定义一个线程安全的布尔变量
 #include <thread>
 
 int main()
@@ -23,11 +23,16 @@ int main()
         return 1;
     }
 
+    /*
+    std::atomic<bool> 允许多个线程安全地读写这个开关。
+    它现在承担的逻辑是：只要 running == true，程序继续；任何一边发现需要退出，就把它改成 false；另一边看到后也会跟着退出。
+    */
     std::atomic<bool> running(true);  //定义一个原子布尔变量，表示客户端是否正在运行
 
+    //单独开一个线程，专门负责“持续接收服务端消息”
     std::thread receive_thread([&](){
         while (running) {
-            std::string message = client.receiveMessage();  //在一个单独的线程里不断等待服务端的消息
+            std::string message = client.receiveMessage(); 
 
             if (message.empty()) {  //如果服务端断开连接或者消息为空，就退出循环
                 std::cerr << "Server disconnected or recieve failed." << std::endl;
@@ -37,7 +42,7 @@ int main()
 
             std::cout << message << std::endl;  //打印服务端发来的消息
         }
-    });
+    });  //lambda 表达式，捕获外部变量 running 和 client 的引用
 
 
     std::string message;
@@ -71,6 +76,6 @@ int main()
         }
 
     }
-    receive_thread.join();  //等待接收线程结束
+    receive_thread.join();  //join() ：主线程要等接收线程结束以后，再一起退出程序
     return 0;
 }
