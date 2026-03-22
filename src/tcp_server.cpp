@@ -133,8 +133,15 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
         return; //昵称重复了，直接返回，不继续处理这个客户端了
     }
 
+    size_t online_count;
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
+        online_count = clients_.size(); //获取当前在线客户端数量
+    }
+
     std::cout << nickname << " joined the chat." << std::endl;
-    broadcastMessage("[System] " + nickname + " joined the chat.", client_fd); //广播消息，告诉其他人这个人加入了
+    broadcastMessage("[System] " + nickname + " joined the chat. Online users: " + 
+                      std::to_string(online_count), client_fd); //广播消息，告诉其他人这个人加入了
 
         while (true)   //内层循环：和当前这个客户端持续聊天
         {
@@ -158,15 +165,19 @@ void TcpServer::handleClient(int client_fd, sockaddr_in client_addr)
             
         }
 
-        broadcastMessage("[System] " + nickname + " left the chat.", client_fd); 
-
+        size_t online_count_after_leave;
         {
-            std::lock_guard<std::mutex> lock(clients_mutex_);
+            std::lock_guard<std::mutex> lock(clients_mutex_); //锁住 clients_，保证线程安全
             nicknames_.erase(client_fd); //从 nicknames_ 中移除这个客户端的昵称
+            clients_.erase(std::remove(clients_.begin(), clients_.end(), client_fd), clients_.end()); //从 clients_ 中移除这个客户端的文件描述符
+            online_count_after_leave = clients_.size() ; 
         }
 
-        removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
-        close(client_fd); //关闭和这个客户端的连接
+        broadcastMessage("[System] " + nickname + " left the chat. Online users: " + 
+                        std::to_string(online_count_after_leave), client_fd); 
+
+        close(client_fd); //最后关闭这个客户端的 socket 连接
+
 }
 
 //拿锁，遍历所有在线客户端，把消息发给除了发送者之外的每个人
