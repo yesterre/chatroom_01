@@ -18,6 +18,7 @@ class TcpServer
     private:
         void handleNewConnection();  
         void handleClientMessage(int client_fd);  //处理客户端发送的消息，参数是客户端的 socket 文件描述符
+        void sendToClient(int client_fd, const std::string& message);  //向指定客户端发送消息，参数是客户端的 socket 文件描述符和要发送的消息内容
 
         void broadcastMessage(const std::string& message, int sender_fd);  //向所有连接的客户端广播消息，参数是要广播的消息和发送者的 socket 文件描述符（可以用来排除发送者自己）
         void removeClient(int client_fd);  //从客户端列表中移除一个客户端连接，参数是客户端的 socket 文件描述符

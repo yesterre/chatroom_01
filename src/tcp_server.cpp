@@ -168,7 +168,7 @@ void TcpServer::handleClientMessage(int client_fd)
 
         if (nickname_exists) {
             std::string error_message = "[System] Nickname already taken. Please reconnect with another name.";
-            send(client_fd, error_message.c_str(), error_message.size(), 0); 
+            sendToClient(client_fd, error_message);
 
             removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
             return; //昵称重复了，直接返回，不继续处理这个客户端了
@@ -205,6 +205,14 @@ void TcpServer::broadcastMessage(const std::string& message, int sender_fd)
         if (bytes_sent < 0) {
             std::cerr << "broadcast send() failed, fd = " << fd << std::endl;
         }
+    }
+}
+
+void TcpServer::sendToClient(int client_fd, const std::string& message)
+{
+    int bytes_sent = send(client_fd, message.c_str(), message.size(), 0);
+    if (bytes_sent < 0) {
+        std::cerr << "send() failed, fd = " << client_fd << std::endl;
     }
 }
 
