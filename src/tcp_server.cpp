@@ -256,6 +256,10 @@ void TcpServer::run()
                 continue;
             }
 
+            --ready_count; //这个 fd 可读了，准备好的文件描述符数量减 1
+            /*每处理到一个真正就绪的 fd，就把“剩余未处理的就绪 fd 数量”减一。
+            一旦减到 0，说明这一轮所有就绪事件都处理完了，可以直接结束 for 循环 */
+
             if(fd == listen_fd_) { //如果这个文件描述符是监听 socket，说明有新的客户端连接请求了
                 handleNewConnection(); //处理这个新的连接请求
             } else { //否则说明是某个客户端发来了消息
