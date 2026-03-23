@@ -1,17 +1,12 @@
 /*
-表示一个最小 TCP 服务端。
-它先只负责：
-记住监听地址和端口
-创建监听 socket
-启动服务
-跑主循环，接收一个客户端消息
+
 */
 
 #pragma once   //防止头文件被重复包含
 
 #include <string>
 #include <vector>
-#include <mutex>
+#include <sys/socket.h>  //包含 socket 函数和相关结构体定义
 #include <netinet/in.h>  //包含 sockaddr_in 结构体定义
 #include <unordered_map>
 
@@ -25,7 +20,9 @@ class TcpServer
         void run();  //服务端进入运行状态
 
     private:
-        void handleClient(int client_fd, sockaddr_in client_addr);  //处理客户端连接的函数，参数是客户端的 socket 文件描述符和客户端地址信息
+        void handleNewConnection();  
+        void handleClientMessage(int client_fd);  //处理客户端发送的消息，参数是客户端的 socket 文件描述符
+
         void broadcastMessage(const std::string& message, int sender_fd);  //向所有连接的客户端广播消息，参数是要广播的消息和发送者的 socket 文件描述符（可以用来排除发送者自己）
         void removeClient(int client_fd);  //从客户端列表中移除一个客户端连接，参数是客户端的 socket 文件描述符
 
@@ -36,5 +33,7 @@ class TcpServer
 
         std::unordered_map<int, std::string> nicknames_;  //保存客户端的昵称，键是客户端的 socket 文件描述符，值是对应的昵称。使用 unordered_map 是因为它提供了快速的查找和插入操作
         std::vector<int> clients_;  //保存当前连接的客户端 socket 文件描述符列表。使用 vector 是因为客户端数量不固定，可以动态增加和减少
-        std::mutex clients_mutex_;  //保护 clients_ 列表的互斥锁，确保在多线程环境下对 clients_ 的访问是安全的
+        
+        fd_set master_set_;  //保存所有 socket 文件描述符的集合，用于 select 函数监视多个文件描述符的状态
+        int max_fd_;  //保存当前监视的最大文件描述符值，select 函数需要知道监视的文件描述符范围，所以需要维护一个 max_fd_ 变量
 };
