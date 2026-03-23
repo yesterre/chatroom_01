@@ -27,7 +27,6 @@ TcpClient::~TcpClient() {
     }
 }
 
-
 bool TcpClient::connectToServer() {
     sock_fd_ = socket(AF_INET, SOCK_STREAM, 0);  //创建一个 socket，AF_INET 表示 IPv4，SOCK_STREAM 表示 TCP 协议
     if (sock_fd_ < 0) {
