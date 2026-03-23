@@ -4,7 +4,7 @@
 #include <iostream>
 #include <sys/socket.h>  ////为了用 socket 相关函数：socket()，bind()，listen()，accept()，send()，recv(), setsockopt()
 #include <unistd.h>  //为了用close()，在 Linux 下关闭文件描述符靠它
-#include <algorithm>  //为了用 std::remove 配合 erase 从 clients_ 中移除断开的客户端
+#include <algorithm> 
 
 /*  构造函数
 把传进来的 ip 保存到 ip_，把传进来的 port 保存到 port_，把 listen_fd_ 初始化成 -1
@@ -22,8 +22,8 @@ TcpServer::TcpServer(const std::string& ip, int port)
 */
 TcpServer::~TcpServer() 
 {
-    for (int fd : clients_) {
-        close(fd); //把所有在线客户端的 socket 连接都关掉
+    for (const auto& pair : clients_) { //对于 clients_ 里的每一个客户端命名为 pair，执行下面的代码
+        close(pair.first); //把所有在线客户端的 socket 连接都关掉
     }
 
     if (listen_fd_ != -1) {
@@ -107,8 +107,8 @@ void TcpServer::handleNewConnection()
               << ":" << ntohs(client_addr.sin_port) 
               << ", fd = " << client_fd << std::endl;  //ntohs() 是把网络字节序的端口号转换成主机字节序，方便打印出来看
 
-    clients_.push_back(client_fd); //把这个新客户端的文件描述符加入到 clients_ 列表里，广播消息时使用
-    FD_SET(client_fd, &master_set_); //把这个新客户端的文件描述符加入到 master_set_ 里，表示我们要监听这个文件描述符的事件
+    clients_[client_fd] = ClientInfo{client_fd, "", false}; //把这个新客户端的文件描述符和一个空昵称关联起来，存到 clients_ 里，表示它在线了，但还没有设置昵称
+    FD_SET(client_fd, &master_set_); //把这个新客户端的文件描述符加入到 master_set_ 里，表示我们要监听这个文件描述符的可读事件
 
     if (client_fd > max_fd_) { //更新 max_fd_，它表示当前 master_set_ 里最大的文件描述符值，select() 需要用到这个值来知道检查哪些文件描述符
         max_fd_ = client_fd;
@@ -128,13 +128,16 @@ void TcpServer::handleClientMessage(int client_fd)
         return; //出错了，直接返回，不继续处理这个客户端了
     }
 
+    auto it = clients_.find(client_fd);
+    if (it == clients_.end()) { //如果在 clients_ 里找不到这个客户端的文件描述符，说明这个客户端已经断开了连接了，或者根本就不在线了
+        return; //直接返回，不继续处理这个客户端了
+    }
+
+    ClientInfo& client = it->second; //如果找到了这个客户端，就把它的信息取出来，命名为 client，方便后续使用
+
     if (bytes_received == 0) 
     { 
-        std::string nickname = "Unknown";
-        auto it = nicknames_.find(client_fd);
-        if (it != nicknames_.end()) {
-            nickname = it->second; //如果找到了这个客户端的昵称，就用它，否则就用 "Unknown"
-        }
+        std::string nickname = client.registered ? client.nickname : "Unknown"; //如果这个客户端之前注册过昵称，就用它的昵称，否则就用 "Unknown"
         
         removeClient(client_fd); //从 clients_ 列表里移除这个客户端的文件描述符，表示它不在线了
 
@@ -151,10 +154,13 @@ void TcpServer::handleClientMessage(int client_fd)
     buffer[bytes_received] = '\0'; 
     std::string text = buffer; //把收到的消息转换成 std::string，方便后续处理
 
-    if (nicknames_.find(client_fd) == nicknames_.end()){
+    if (!client.registered) 
+    {  //如果这个客户端还没有注册过昵称，就把它收到的第一条消息当作昵称来处理
         bool nickname_exists = false; //先假设这个昵称不存在，后面再检查一下
-        for (const auto& pair : nicknames_) {  ////遍历当前在线客户端的昵称列表，看看有没有和这个新客户端一样的昵称
-            if (pair.second == text) {
+        for (const auto& pair : clients_) {  //对于 clients_ 里的每一个客户端命名为 pair，执行下面的代码
+            if (pair.first != client_fd &&
+                pair.second.registered &&
+                pair.second.nickname == text) {
                 nickname_exists = true;
                 break;
             }
@@ -168,19 +174,18 @@ void TcpServer::handleClientMessage(int client_fd)
             return; //昵称重复了，直接返回，不继续处理这个客户端了
         }
 
-        std::string nickname = text; //把这个消息当作昵称来处理
-        nicknames_[client_fd] = nickname; //把这个客户端的文件描述符和昵称关联起来，存到 nicknames_ 里
+        client.nickname = text; //把这个客户端的昵称设置成它收到的第一条消息
+        client.registered = true; //把这个客户端标记成已经注册过昵称了
 
-        std::cout << nickname << " joined the chat." << std::endl;
+        std::cout << client.nickname << " joined the chat." << std::endl;
 
         std::string join_msg = 
-            "[System] " + nickname + " joined the chat. Online users: " + std::to_string(clients_.size());
+            "[System] " + client.nickname + " joined the chat. Online users: " + std::to_string(clients_.size());
         broadcastMessage(join_msg, client_fd); //广播消息，告诉其他人这个人加入了
         return; //处理完昵称了，直接返回，不继续处理这个客户端了
     }
 
-    std::string nickname = nicknames_[client_fd]; //根据这个客户端的文件描述符，从 nicknames_ 里找到它的昵称
-    std::string message = "[" + nickname + "] says: " + text; //把这个消息格式化一下，准备广播给其他人看
+    std::string message = "[" + client.nickname + "] says: " + text; //把这个消息格式化一下，准备广播给其他人看
     
     std::cout << message << std::endl; //打印收到的消息，看看是什么内容
     broadcastMessage(message, client_fd); //广播消息，发给除了发送者之外的所有在线客户端
@@ -190,7 +195,8 @@ void TcpServer::handleClientMessage(int client_fd)
 //遍历所有在线客户端，把消息发给除了发送者之外的每个人
 void TcpServer::broadcastMessage(const std::string& message, int sender_fd)
 {
-    for (int fd : clients_) {  //对于 clients_ 里的每一个客户端命名为 fd，执行下面的代码
+    for (const auto& pair : clients_) {  //对于 clients_ 里的每一个客户端命名为 fd，执行下面的代码
+        int fd = pair.first; //把这个客户端的文件描述符取出来，命名为 fd，方便后续使用
         if (fd == sender_fd) { //不发回给发送者自己
             continue; //发消息给这个客户端
         }
@@ -207,18 +213,13 @@ void TcpServer::removeClient(int client_fd)
     FD_CLR(client_fd, &master_set_); //从 master_set_ 里移除这个客户端的文件描述符，表示我们不再监听这个文件描述符的事件了
     close(client_fd); //把这个客户端的 socket 连接关掉
 
-    nicknames_.erase(client_fd); //从 nicknames_ 里移除这个客户端的文件描述符，表示它没有昵称了
-    /*
-    remove() 是一个算法函数，接受一个范围和一个值，把范围内等于这个值的元素都移到范围末尾，并返回第一个被移到末尾的元素的迭代器。
-    然后我们用 erase() 把这些被移到末尾的元素真正删除掉。
-    */
-    clients_.erase(std::remove(clients_.begin(), clients_.end(), client_fd), clients_.end()); //从 clients_ 中移除这个客户端的文件描述符
+    clients_.erase(client_fd); //从 clients_ 中移除这个客户端的信息，表示它已经不在线了
 
     if (client_fd == max_fd_){
         max_fd_ = listen_fd_; //如果这个客户端的文件描述符是当前 master_set_ 里最大的，就把 max_fd_ 更新成 listen_fd_，因为 listen_fd_ 是我们一直在监听的
-        for (int fd : clients_) { //遍历 clients_ 里的每一个客户端命名为 fd，执行下面的代码
-            if (fd > max_fd_) { //如果这个客户端的文件描述符比当前 max_fd_ 还大，就更新 max_fd_
-                max_fd_ = fd;
+        for (const auto& pair : clients_) { //遍历 clients_ 里的每一个客户端命名为 fd，执行下面的代码
+            if (pair.first > max_fd_) { //如果这个客户端的文件描述符比当前 max_fd_ 还大，就更新 max_fd_
+                max_fd_ = pair.first;
             }
         }
     }
@@ -229,7 +230,7 @@ void TcpServer::removeClient(int client_fd)
    - 如果 listen_fd_ 可读，说明有新连接到来，调用 handleNewConnection()
    - 如果某个 client_fd 可读，说明该客户端发来了消息或已断开，调用 handleClientMessage()  
 */
-void TcpServer::run()  //主线程只负责 accept，每接受一个客户端连接，就创建一个新线程来 handleClient，主线程继续等待下一个客户端连接
+void TcpServer::run() 
 {
     while (true) 
     {

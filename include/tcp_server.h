@@ -1,14 +1,10 @@
-/*
-
-*/
-
 #pragma once   //防止头文件被重复包含
 
 #include <string>
-#include <vector>
 #include <sys/socket.h>  //包含 socket 函数和相关结构体定义
+#include <sys/select.h>  //包含 select 函数和相关结构体定义
 #include <netinet/in.h>  //包含 sockaddr_in 结构体定义
-#include <unordered_map>
+#include <unordered_map>  //包含 unordered_map 容器定义
 
 class TcpServer
 {
@@ -31,8 +27,14 @@ class TcpServer
         int listen_fd_;  
         //监听 socket 的文件描述符。在 Linux 里，socket 也是文件描述符的一种，所以通常用 int 保存
 
-        std::unordered_map<int, std::string> nicknames_;  //保存客户端的昵称，键是客户端的 socket 文件描述符，值是对应的昵称。使用 unordered_map 是因为它提供了快速的查找和插入操作
-        std::vector<int> clients_;  //保存当前连接的客户端 socket 文件描述符列表。使用 vector 是因为客户端数量不固定，可以动态增加和减少
+        struct ClientInfo
+        {
+            int fd;  //客户端的 socket 文件描述符
+            std::string nickname;  //客户端的昵称
+            bool registered;  //客户端是否已经注册了昵称
+        };
+
+        std::unordered_map<int, ClientInfo> clients_;  //保存所有在线客户端的信息，键是客户端 fd，值是该客户端对应的状态信息
         
         fd_set master_set_;  //保存所有 socket 文件描述符的集合，用于 select 函数监视多个文件描述符的状态
         int max_fd_;  //保存当前监视的最大文件描述符值，select 函数需要知道监视的文件描述符范围，所以需要维护一个 max_fd_ 变量
