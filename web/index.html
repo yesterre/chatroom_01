@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatRoom Web Demo</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel left">
+        <h1>ChatRoom 01</h1>
+        <p class="subtitle">第四阶段 Web 最小演示</p>
+
+        <div class="card">
+          <label for="nickname">昵称</label>
+          <input id="nickname" type="text" maxlength="24" placeholder="输入昵称" />
+          <button id="connectBtn">连接后端</button>
+          <button id="disconnectBtn" class="ghost">断开</button>
+          <p id="statusText" class="status">未连接</p>
+        </div>
+      </section>
+
+      <section class="panel right">
+        <div id="messageList" class="messages"></div>
+
+        <form id="sendForm" class="composer">
+          <input id="messageInput" type="text" maxlength="300" placeholder="输入消息后回车发送" />
+          <button type="submit">发送</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

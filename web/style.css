@@ -1,0 +1,146 @@
+:root {
+  --bg: #f7f4ea;
+  --ink: #1f2937;
+  --accent: #116466;
+  --accent-soft: #d7efe8;
+  --warn: #9f1239;
+  --card: #fffdf6;
+  --line: #d9d5c9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: radial-gradient(circle at top right, #f0e4c7, var(--bg) 45%);
+  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.layout {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+}
+
+.panel {
+  padding: 24px;
+}
+
+.left {
+  border-right: 1px solid var(--line);
+  background: linear-gradient(160deg, #fff8e8, #fffef9);
+}
+
+.right {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 12px;
+}
+
+h1 {
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.subtitle {
+  margin: 8px 0 20px;
+  color: #5f6b7a;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+input,
+button {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  margin: 4px 0 0;
+  color: #334155;
+}
+
+.messages {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px;
+  overflow-y: auto;
+  min-height: 360px;
+  max-height: calc(100vh - 170px);
+}
+
+.msg {
+  padding: 8px 10px;
+  border-radius: 10px;
+  margin: 8px 0;
+  width: fit-content;
+  max-width: min(70ch, 95%);
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.msg.self {
+  margin-left: auto;
+  background: var(--accent-soft);
+}
+
+.msg.other {
+  background: #eef2ff;
+}
+
+.msg.system {
+  background: #fef2f2;
+  color: var(--warn);
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  gap: 10px;
+}
+
+@media (max-width: 920px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .left {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .messages {
+    max-height: 54vh;
+  }
+}
