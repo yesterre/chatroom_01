@@ -30,14 +30,70 @@ function getSessionId() {
 }
 
 const sessionId = getSessionId();
+const HISTORY_KEY = 'chatroom_history_' + sessionId;
+const NICKNAME_KEY = 'chatroom_nickname_' + sessionId;
+const MAX_HISTORY = 300;
 
-function appendMessage(text, type) {
-  const div = document.createElement('div');
+function loadHistory() {
+  const raw = localStorage.getItem(HISTORY_KEY);
+  if (raw === null || raw.length === 0) {
+    return [];
+  }
+
+  try {
+    const list = JSON.parse(raw);
+    if (Array.isArray(list) === false) {
+      return [];
+    }
+    return list.filter(function (item) {
+      return item && typeof item.text === 'string' && typeof item.type === 'string';
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  const safeList = Array.isArray(list) ? list.slice(-MAX_HISTORY) : [];
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(safeList));
+}
+
+function readNicknameCache() {
+  const name = localStorage.getItem(NICKNAME_KEY);
+  return name && name.length > 0 ? name : '';
+}
+
+function writeNicknameCache(name) {
+  if (typeof name === 'string' && name.length > 0) {
+    localStorage.setItem(NICKNAME_KEY, name);
+  }
+}
+
+let historyCache = loadHistory();
+
+function appendMessage(text, type, persist) {
   const itemType = type || 'other';
+  const shouldPersist = persist !== false;
+
+  const div = document.createElement('div');
   div.className = 'msg ' + itemType;
   div.textContent = text;
   messageList.appendChild(div);
   messageList.scrollTop = messageList.scrollHeight;
+
+  if (shouldPersist) {
+    historyCache.push({ text: text, type: itemType, at: Date.now() });
+    if (historyCache.length > MAX_HISTORY) {
+      historyCache = historyCache.slice(-MAX_HISTORY);
+    }
+    saveHistory(historyCache);
+  }
+}
+
+function restoreHistoryToView() {
+  historyCache.forEach(function (item) {
+    appendMessage(item.text, item.type, false);
+  });
 }
 
 function setConnected(nextConnected, nickname) {
@@ -103,7 +159,13 @@ function ensureEventStream() {
     if (data === null) {
       return;
     }
+
     setConnected(Boolean(data.connected), data.nickname || '');
+
+    if (data.connected && typeof data.nickname === 'string' && data.nickname.length > 0) {
+      writeNicknameCache(data.nickname);
+      nicknameInput.value = data.nickname;
+    }
   });
 
   eventSource.addEventListener('users', function (event) {
@@ -122,15 +184,15 @@ function ensureEventStream() {
     if (typeof data.text !== 'string' || data.text.length === 0) {
       return;
     }
-    appendMessage(data.text, 'other');
+    appendMessage(data.text, 'other', true);
   });
 
   eventSource.addEventListener('system', function (event) {
     const data = parseJsonSafely(event.data);
     if (data && typeof data.text === 'string') {
-      appendMessage(data.text, 'system');
+      appendMessage(data.text, 'system', true);
     } else {
-      appendMessage(event.data, 'system');
+      appendMessage(event.data, 'system', true);
     }
   });
 
@@ -162,21 +224,28 @@ async function postJson(url, body) {
   return data;
 }
 
-connectBtn.addEventListener('click', async function () {
-  const nickname = nicknameInput.value.trim();
-  if (nickname.length === 0) {
-    appendMessage('请输入昵称后再连接。', 'system');
+async function connectWithNickname(nickname) {
+  const name = (nickname || '').trim();
+  if (name.length === 0) {
+    appendMessage('请输入昵称后再连接。', 'system', true);
     return;
   }
 
   try {
     ensureEventStream();
-    const data = await postJson('/api/connect', { nickname: nickname });
-    setConnected(true, data.nickname || nickname);
-    appendMessage('你已进入聊天室：' + (data.nickname || nickname), 'system');
+    const data = await postJson('/api/connect', { nickname: name });
+    const finalName = data.nickname || name;
+    setConnected(true, finalName);
+    writeNicknameCache(finalName);
+    nicknameInput.value = finalName;
+    appendMessage('你已进入聊天室：' + finalName, 'system', true);
   } catch (err) {
-    appendMessage('连接失败：' + err.message, 'system');
+    appendMessage('连接失败：' + err.message, 'system', true);
   }
+}
+
+connectBtn.addEventListener('click', async function () {
+  await connectWithNickname(nicknameInput.value);
 });
 
 disconnectBtn.addEventListener('click', async function () {
@@ -187,9 +256,9 @@ disconnectBtn.addEventListener('click', async function () {
   try {
     await postJson('/api/disconnect', {});
     setConnected(false, '');
-    appendMessage('已断开连接。', 'system');
+    appendMessage('已断开连接。', 'system', true);
   } catch (err) {
-    appendMessage('断开失败：' + err.message, 'system');
+    appendMessage('断开失败：' + err.message, 'system', true);
   }
 });
 
@@ -202,20 +271,38 @@ sendForm.addEventListener('submit', async function (event) {
   }
 
   if (connected === false) {
-    appendMessage('请先连接后端。', 'system');
+    appendMessage('请先连接后端。', 'system', true);
     return;
   }
 
   try {
     await postJson('/api/send', { message: text });
-    appendMessage('[' + currentNickname + '] says: ' + text, 'self');
+    appendMessage('[' + currentNickname + '] says: ' + text, 'self', true);
     messageInput.value = '';
   } catch (err) {
-    appendMessage('发送失败：' + err.message, 'system');
+    appendMessage('发送失败：' + err.message, 'system', true);
   }
 });
 
 setConnected(false, '');
 renderUsers([]);
+restoreHistoryToView();
+
+const cachedNickname = readNicknameCache();
+if (cachedNickname.length > 0) {
+  nicknameInput.value = cachedNickname;
+}
+
 ensureEventStream();
-appendMessage('页面已就绪，先输入昵称并连接。', 'system');
+
+if (cachedNickname.length > 0) {
+  setTimeout(function () {
+    if (connected === false) {
+      connectWithNickname(cachedNickname);
+    }
+  }, 200);
+}
+
+if (historyCache.length === 0) {
+  appendMessage('页面已就绪，先输入昵称并连接。', 'system', true);
+}
