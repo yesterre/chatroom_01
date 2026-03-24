@@ -1,9 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 class WebBridge {
@@ -21,23 +23,39 @@ private:
         std::string body;
     };
 
+    struct Session {
+        std::mutex mutex;
+        int backend_fd = -1;
+        bool connected = false;
+        std::string nickname;
+        std::thread backend_reader;
+        std::vector<int> sse_clients;
+    };
+
     bool setupHttpListen();
     void stop();
 
     void acceptLoop();
     void handleHttpClient(int fd);
 
-    bool connectBackend(const std::string& nickname, std::string& error);
-    void disconnectBackend();
-    bool sendBackendMessage(const std::string& message, std::string& error);
+    std::shared_ptr<Session> getOrCreateSession(const std::string& sid);
 
-    void backendReadLoop();
-    void pushSse(const std::string& event_name, const std::string& json_payload);
+    bool connectBackend(const std::string& sid, const std::string& nickname, std::string& error);
+    void disconnectBackend(const std::string& sid);
+    bool sendBackendMessage(const std::string& sid, const std::string& message, std::string& error);
+
+    void backendReadLoop(const std::string& sid, const std::shared_ptr<Session>& session);
+    void pushSse(const std::shared_ptr<Session>& session,
+                 const std::string& event_name,
+                 const std::string& json_payload);
 
     static std::string readAllRequest(int fd);
     static bool parseHttpRequest(const std::string& raw, HttpRequest& req);
     static std::string jsonEscape(const std::string& text);
     static std::string getJsonString(const std::string& body, const std::string& key);
+    static std::string routePath(const std::string& path);
+    static std::string queryParam(const std::string& path, const std::string& key);
+    static bool validSid(const std::string& sid);
 
     static void writeHttpResponse(int fd,
                                   int status,
@@ -56,16 +74,8 @@ private:
     int port_;
 
     int listen_fd_;
-    int backend_fd_;
-
     std::atomic<bool> running_;
-    std::atomic<bool> backend_connected_;
 
-    std::string nickname_;
-
-    std::mutex backend_mutex_;
-    std::thread backend_reader_;
-
-    std::mutex sse_mutex_;
-    std::vector<int> sse_clients_;
+    std::mutex sessions_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
 };

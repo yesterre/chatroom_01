@@ -10,6 +10,24 @@ let connected = false;
 let currentNickname = '';
 let eventSource = null;
 
+function createSessionId() {
+  const rand = Math.random().toString(36).slice(2, 10);
+  const now = Date.now().toString(36);
+  return 'sid_' + now + '_' + rand;
+}
+
+function getSessionId() {
+  const key = 'chatroom_web_sid';
+  let sid = sessionStorage.getItem(key);
+  if (sid === null || sid.length === 0) {
+    sid = createSessionId();
+    sessionStorage.setItem(key, sid);
+  }
+  return sid;
+}
+
+const sessionId = getSessionId();
+
 function appendMessage(text, type) {
   const div = document.createElement('div');
   const itemType = type || 'other';
@@ -48,7 +66,8 @@ function ensureEventStream() {
     return;
   }
 
-  eventSource = new EventSource('/api/events');
+  const url = '/api/events?sid=' + encodeURIComponent(sessionId);
+  eventSource = new EventSource(url);
 
   eventSource.addEventListener('status', function (event) {
     const data = parseJsonSafely(event.data);
@@ -84,10 +103,12 @@ function ensureEventStream() {
 }
 
 async function postJson(url, body) {
+  const payload = Object.assign({}, body, { sid: sessionId });
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 
   let data;
@@ -159,4 +180,4 @@ sendForm.addEventListener('submit', async function (event) {
 
 setConnected(false, '');
 ensureEventStream();
-appendMessage('页面已就绪，先输入昵称并连接。', 'system');
+appendMessage('页面已就绪，先输入昵称并连接。会话ID: ' + sessionId, 'system');

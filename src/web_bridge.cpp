@@ -5,13 +5,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <array>
+#include <cctype>
 #include <cerrno>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <sstream>
-#include <filesystem>
-#include <array>
 #include <limits.h>
+#include <sstream>
+#include <system_error>
 
 namespace {
 constexpr int kBufferSize = 4096;
@@ -37,12 +39,12 @@ bool sendAll(int fd, const std::string& data) {
 
 std::string executableDir() {
     std::array<char, PATH_MAX> buf{};
-    ssize_t n = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+    const ssize_t n = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
     if (n <= 0) {
         return "";
     }
-    buf[static_cast<size_t>(n)] = 0;
 
+    buf[static_cast<size_t>(n)] = 0;
     std::filesystem::path exe_path(buf.data());
     return exe_path.parent_path().string();
 }
@@ -79,9 +81,7 @@ WebBridge::WebBridge(const std::string& backend_ip, int backend_port, const std:
       host_(host),
       port_(port),
       listen_fd_(-1),
-      backend_fd_(-1),
-      running_(false),
-      backend_connected_(false) {}
+      running_(false) {}
 
 WebBridge::~WebBridge() {
     stop();
@@ -91,8 +91,8 @@ bool WebBridge::start() {
     if (!setupHttpListen()) {
         return false;
     }
-    running_ = true;
 
+    running_ = true;
     std::cout << "Web bridge started at http://" << host_ << ":" << port_ << std::endl;
     std::cout << "Bridge backend target: " << backend_ip_ << ":" << backend_port_ << std::endl;
     return true;
@@ -131,7 +131,7 @@ bool WebBridge::setupHttpListen() {
         return false;
     }
 
-    if (listen(listen_fd_, 16) < 0) {
+    if (listen(listen_fd_, 64) < 0) {
         std::cerr << "web bridge listen() failed" << std::endl;
         safeClose(listen_fd_);
         return false;
@@ -142,17 +142,44 @@ bool WebBridge::setupHttpListen() {
 
 void WebBridge::stop() {
     running_ = false;
-
-    disconnectBackend();
     safeClose(listen_fd_);
 
-    std::lock_guard<std::mutex> lock(sse_mutex_);
-    for (int fd : sse_clients_) {
-        if (fd >= 0) {
-            close(fd);
+    std::unordered_map<std::string, std::shared_ptr<Session>> sessions_copy;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions_copy.swap(sessions_);
+    }
+
+    for (auto& pair : sessions_copy) {
+        const std::shared_ptr<Session>& session = pair.second;
+        std::thread reader;
+
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            if (session->backend_fd >= 0) {
+                shutdown(session->backend_fd, SHUT_RDWR);
+                close(session->backend_fd);
+                session->backend_fd = -1;
+            }
+            session->connected = false;
+            session->nickname.clear();
+
+            for (int sse_fd : session->sse_clients) {
+                if (sse_fd >= 0) {
+                    close(sse_fd);
+                }
+            }
+            session->sse_clients.clear();
+
+            if (session->backend_reader.joinable()) {
+                reader = std::move(session->backend_reader);
+            }
+        }
+
+        if (reader.joinable()) {
+            reader.join();
         }
     }
-    sse_clients_.clear();
 }
 
 void WebBridge::acceptLoop() {
@@ -165,11 +192,27 @@ void WebBridge::acceptLoop() {
             if (errno == EINTR) {
                 continue;
             }
+            if (!running_) {
+                break;
+            }
             std::cerr << "web bridge accept() failed" << std::endl;
             continue;
         }
+
         std::thread(&WebBridge::handleHttpClient, this, client_fd).detach();
     }
+}
+
+std::shared_ptr<WebBridge::Session> WebBridge::getOrCreateSession(const std::string& sid) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto it = sessions_.find(sid);
+    if (it != sessions_.end()) {
+        return it->second;
+    }
+
+    auto session = std::make_shared<Session>();
+    sessions_[sid] = session;
+    return session;
 }
 
 void WebBridge::handleHttpClient(int fd) {
@@ -182,20 +225,20 @@ void WebBridge::handleHttpClient(int fd) {
         return;
     }
 
-    if (req.method == "GET" && req.path == "/") {
+    const std::string path = routePath(req.path);
+
+    if (req.method == "GET" && path == "/") {
         std::string html = loadFile("web/index.html");
         if (html.empty()) {
-            writeHttpResponse(fd, 500, "Internal Server Error", "text/plain",
-                              "Missing web/index.html");
-            close(fd);
-            return;
+            writeHttpResponse(fd, 500, "Internal Server Error", "text/plain", "Missing web/index.html");
+        } else {
+            writeHttpResponse(fd, 200, "OK", "text/html; charset=utf-8", html);
         }
-        writeHttpResponse(fd, 200, "OK", "text/html; charset=utf-8", html);
         close(fd);
         return;
     }
 
-    if (req.method == "GET" && req.path == "/style.css") {
+    if (req.method == "GET" && path == "/style.css") {
         std::string css = loadFile("web/style.css");
         writeHttpResponse(fd, css.empty() ? 404 : 200, css.empty() ? "Not Found" : "OK",
                           "text/css; charset=utf-8", css.empty() ? "" : css);
@@ -203,7 +246,7 @@ void WebBridge::handleHttpClient(int fd) {
         return;
     }
 
-    if (req.method == "GET" && req.path == "/app.js") {
+    if (req.method == "GET" && path == "/app.js") {
         std::string js = loadFile("web/app.js");
         writeHttpResponse(fd, js.empty() ? 404 : 200, js.empty() ? "Not Found" : "OK",
                           "application/javascript; charset=utf-8", js.empty() ? "" : js);
@@ -211,30 +254,42 @@ void WebBridge::handleHttpClient(int fd) {
         return;
     }
 
-    if (req.method == "GET" && req.path == "/api/events") {
-        writeSseHeaders(fd);
-        {
-            std::lock_guard<std::mutex> lock(sse_mutex_);
-            sse_clients_.push_back(fd);
+    if (req.method == "GET" && path == "/api/events") {
+        const std::string sid = queryParam(req.path, "sid");
+        if (!validSid(sid)) {
+            writeHttpResponse(fd, 400, "Bad Request", "application/json",
+                              "{\"ok\":false,\"error\":\"invalid sid\"}");
+            close(fd);
+            return;
         }
 
-        std::string initial = std::string("event: status\n") +
-                              "data: {\"connected\":" + (backend_connected_ ? "true" : "false") +
-                              ",\"nickname\":\"" + jsonEscape(nickname_) + "\"}\n\n";
-        sendAll(fd, initial);
+        auto session = getOrCreateSession(sid);
+
+        writeSseHeaders(fd);
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            session->sse_clients.push_back(fd);
+
+            const std::string initial = std::string("event: status\n") +
+                                        "data: {\"connected\":" + (session->connected ? "true" : "false") +
+                                        ",\"nickname\":\"" + jsonEscape(session->nickname) + "\"}\n\n";
+            sendAll(fd, initial);
+        }
 
         char keep_alive;
         while (recv(fd, &keep_alive, 1, MSG_DONTWAIT) != 0) {
             usleep(200000);
         }
 
-        std::lock_guard<std::mutex> lock(sse_mutex_);
-        auto it = sse_clients_.begin();
-        while (it != sse_clients_.end()) {
-            if (*it == fd) {
-                it = sse_clients_.erase(it);
-            } else {
-                ++it;
+        {
+            std::lock_guard<std::mutex> lock(session->mutex);
+            auto it = session->sse_clients.begin();
+            while (it != session->sse_clients.end()) {
+                if (*it == fd) {
+                    it = session->sse_clients.erase(it);
+                } else {
+                    ++it;
+                }
             }
         }
 
@@ -242,8 +297,17 @@ void WebBridge::handleHttpClient(int fd) {
         return;
     }
 
-    if (req.method == "POST" && req.path == "/api/connect") {
-        std::string nickname = getJsonString(req.body, "nickname");
+    if (req.method == "POST" && path == "/api/connect") {
+        const std::string sid = getJsonString(req.body, "sid");
+        const std::string nickname = getJsonString(req.body, "nickname");
+
+        if (!validSid(sid)) {
+            writeHttpResponse(fd, 400, "Bad Request", "application/json",
+                              "{\"ok\":false,\"error\":\"invalid sid\"}");
+            close(fd);
+            return;
+        }
+
         if (nickname.empty()) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"nickname is required\"}");
@@ -252,22 +316,31 @@ void WebBridge::handleHttpClient(int fd) {
         }
 
         std::string error;
-        bool ok = connectBackend(nickname, error);
+        bool ok = connectBackend(sid, nickname, error);
         if (!ok) {
-            writeHttpResponse(fd, 500, "Internal Server Error", "application/json",
+            writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"" + jsonEscape(error) + "\"}");
             close(fd);
             return;
         }
 
         writeHttpResponse(fd, 200, "OK", "application/json",
-                          "{\"ok\":true,\"nickname\":\"" + jsonEscape(nickname_) + "\"}");
+                          "{\"ok\":true,\"nickname\":\"" + jsonEscape(nickname) + "\"}");
         close(fd);
         return;
     }
 
-    if (req.method == "POST" && req.path == "/api/send") {
-        std::string message = getJsonString(req.body, "message");
+    if (req.method == "POST" && path == "/api/send") {
+        const std::string sid = getJsonString(req.body, "sid");
+        const std::string message = getJsonString(req.body, "message");
+
+        if (!validSid(sid)) {
+            writeHttpResponse(fd, 400, "Bad Request", "application/json",
+                              "{\"ok\":false,\"error\":\"invalid sid\"}");
+            close(fd);
+            return;
+        }
+
         if (message.empty()) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"message is required\"}");
@@ -276,7 +349,7 @@ void WebBridge::handleHttpClient(int fd) {
         }
 
         std::string error;
-        bool ok = sendBackendMessage(message, error);
+        bool ok = sendBackendMessage(sid, message, error);
         if (!ok) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"" + jsonEscape(error) + "\"}");
@@ -289,9 +362,16 @@ void WebBridge::handleHttpClient(int fd) {
         return;
     }
 
-    if (req.method == "POST" && req.path == "/api/disconnect") {
-        disconnectBackend();
-        pushSse("status", "{\"connected\":false,\"nickname\":\"\"}");
+    if (req.method == "POST" && path == "/api/disconnect") {
+        const std::string sid = getJsonString(req.body, "sid");
+        if (!validSid(sid)) {
+            writeHttpResponse(fd, 400, "Bad Request", "application/json",
+                              "{\"ok\":false,\"error\":\"invalid sid\"}");
+            close(fd);
+            return;
+        }
+
+        disconnectBackend(sid);
         writeHttpResponse(fd, 200, "OK", "application/json", "{\"ok\":true}");
         close(fd);
         return;
@@ -302,12 +382,15 @@ void WebBridge::handleHttpClient(int fd) {
     close(fd);
 }
 
-bool WebBridge::connectBackend(const std::string& nickname, std::string& error) {
-    std::lock_guard<std::mutex> lock(backend_mutex_);
+bool WebBridge::connectBackend(const std::string& sid, const std::string& nickname, std::string& error) {
+    auto session = getOrCreateSession(sid);
 
-    if (backend_connected_) {
-        error = "already connected";
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        if (session->connected) {
+            error = "already connected";
+            return false;
+        }
     }
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -337,47 +420,84 @@ bool WebBridge::connectBackend(const std::string& nickname, std::string& error) 
         return false;
     }
 
-    backend_fd_ = fd;
-    nickname_ = nickname;
-    backend_connected_ = true;
+    std::thread old_reader;
+    {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        if (session->backend_reader.joinable()) {
+            old_reader = std::move(session->backend_reader);
+        }
 
-    if (backend_reader_.joinable()) {
-        backend_reader_.join();
+        session->backend_fd = fd;
+        session->connected = true;
+        session->nickname = nickname;
+        session->backend_reader = std::thread(&WebBridge::backendReadLoop, this, sid, session);
     }
-    backend_reader_ = std::thread(&WebBridge::backendReadLoop, this);
 
-    pushSse("status", "{\"connected\":true,\"nickname\":\"" + jsonEscape(nickname_) + "\"}");
+    if (old_reader.joinable()) {
+        old_reader.join();
+    }
+
+    pushSse(session, "status", "{\"connected\":true,\"nickname\":\"" + jsonEscape(nickname) + "\"}");
     return true;
 }
 
-void WebBridge::disconnectBackend() {
+void WebBridge::disconnectBackend(const std::string& sid) {
+    std::shared_ptr<Session> session;
     {
-        std::lock_guard<std::mutex> lock(backend_mutex_);
-        if (backend_fd_ >= 0) {
-            shutdown(backend_fd_, SHUT_RDWR);
-            close(backend_fd_);
-            backend_fd_ = -1;
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto it = sessions_.find(sid);
+        if (it == sessions_.end()) {
+            return;
         }
-        backend_connected_ = false;
-        nickname_.clear();
+        session = it->second;
     }
 
-    if (backend_reader_.joinable()) {
-        backend_reader_.join();
+    std::thread reader;
+    {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        if (session->backend_fd >= 0) {
+            shutdown(session->backend_fd, SHUT_RDWR);
+            close(session->backend_fd);
+            session->backend_fd = -1;
+        }
+
+        session->connected = false;
+        session->nickname.clear();
+
+        if (session->backend_reader.joinable()) {
+            reader = std::move(session->backend_reader);
+        }
     }
+
+    if (reader.joinable() && reader.get_id() != std::this_thread::get_id()) {
+        reader.join();
+    }
+
+    pushSse(session, "status", "{\"connected\":false,\"nickname\":\"\"}");
 }
 
-bool WebBridge::sendBackendMessage(const std::string& message, std::string& error) {
-    std::lock_guard<std::mutex> lock(backend_mutex_);
+bool WebBridge::sendBackendMessage(const std::string& sid, const std::string& message, std::string& error) {
+    std::shared_ptr<Session> session;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto it = sessions_.find(sid);
+        if (it == sessions_.end()) {
+            error = "session not found";
+            return false;
+        }
+        session = it->second;
+    }
 
-    if (!backend_connected_ || backend_fd_ < 0) {
+    std::lock_guard<std::mutex> lock(session->mutex);
+    if (!session->connected || session->backend_fd < 0) {
         error = "not connected to backend";
         return false;
     }
 
-    if (!sendAll(backend_fd_, message)) {
-        backend_connected_ = false;
-        safeClose(backend_fd_);
+    if (!sendAll(session->backend_fd, message)) {
+        safeClose(session->backend_fd);
+        session->connected = false;
+        session->nickname.clear();
         error = "send to backend failed";
         return false;
     }
@@ -385,18 +505,18 @@ bool WebBridge::sendBackendMessage(const std::string& message, std::string& erro
     return true;
 }
 
-void WebBridge::backendReadLoop() {
+void WebBridge::backendReadLoop(const std::string& sid, const std::shared_ptr<Session>& session) {
+    (void)sid;
     char buffer[kBufferSize];
 
-    while (backend_connected_) {
+    while (true) {
         int local_fd = -1;
         {
-            std::lock_guard<std::mutex> lock(backend_mutex_);
-            local_fd = backend_fd_;
-        }
-
-        if (local_fd < 0) {
-            break;
+            std::lock_guard<std::mutex> lock(session->mutex);
+            if (!session->connected || session->backend_fd < 0) {
+                break;
+            }
+            local_fd = session->backend_fd;
         }
 
         ssize_t n = recv(local_fd, buffer, sizeof(buffer) - 1, 0);
@@ -404,40 +524,41 @@ void WebBridge::backendReadLoop() {
             break;
         }
 
-        buffer[n] = '\0';
+        buffer[n] = 0;
         std::string text(buffer);
-
         while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
             text.pop_back();
         }
 
         if (!text.empty()) {
-            pushSse("message", "{\"text\":\"" + jsonEscape(text) + "\"}");
+            pushSse(session, "message", "{\"text\":\"" + jsonEscape(text) + "\"}");
         }
     }
 
     {
-        std::lock_guard<std::mutex> lock(backend_mutex_);
-        backend_connected_ = false;
-        safeClose(backend_fd_);
-        nickname_.clear();
+        std::lock_guard<std::mutex> lock(session->mutex);
+        safeClose(session->backend_fd);
+        session->connected = false;
+        session->nickname.clear();
     }
 
-    pushSse("status", "{\"connected\":false,\"nickname\":\"\"}");
-    pushSse("system", "{\"text\":\"backend disconnected\"}");
+    pushSse(session, "status", "{\"connected\":false,\"nickname\":\"\"}");
+    pushSse(session, "system", "{\"text\":\"backend disconnected\"}");
 }
 
-void WebBridge::pushSse(const std::string& event_name, const std::string& json_payload) {
-    std::string packet = "event: " + event_name + "\n" + "data: " + json_payload + "\n\n";
+void WebBridge::pushSse(const std::shared_ptr<Session>& session,
+                        const std::string& event_name,
+                        const std::string& json_payload) {
+    const std::string packet = "event: " + event_name + "\n" + "data: " + json_payload + "\n\n";
 
-    std::lock_guard<std::mutex> lock(sse_mutex_);
-    auto it = sse_clients_.begin();
-    while (it != sse_clients_.end()) {
+    std::lock_guard<std::mutex> lock(session->mutex);
+    auto it = session->sse_clients.begin();
+    while (it != session->sse_clients.end()) {
         if (*it < 0 || !sendAll(*it, packet)) {
             if (*it >= 0) {
                 close(*it);
             }
-            it = sse_clients_.erase(it);
+            it = session->sse_clients.erase(it);
         } else {
             ++it;
         }
@@ -535,27 +656,27 @@ std::string WebBridge::jsonEscape(const std::string& text) {
 }
 
 std::string WebBridge::getJsonString(const std::string& body, const std::string& key) {
-    std::string marker = "\"" + key + "\"";
-    size_t key_pos = body.find(marker);
+    const std::string marker = "\"" + key + "\"";
+    const size_t key_pos = body.find(marker);
     if (key_pos == std::string::npos) {
         return "";
     }
 
-    size_t colon = body.find(':', key_pos + marker.size());
+    const size_t colon = body.find(':', key_pos + marker.size());
     if (colon == std::string::npos) {
         return "";
     }
 
-    size_t quote_start = body.find('"', colon + 1);
+    const size_t quote_start = body.find('"', colon + 1);
     if (quote_start == std::string::npos) {
         return "";
     }
 
     std::string value;
     for (size_t i = quote_start + 1; i < body.size(); ++i) {
-        char c = body[i];
+        const char c = body[i];
         if (c == '\\' && i + 1 < body.size()) {
-            char next = body[i + 1];
+            const char next = body[i + 1];
             switch (next) {
                 case 'n':
                     value.push_back('\n');
@@ -579,6 +700,7 @@ std::string WebBridge::getJsonString(const std::string& body, const std::string&
             ++i;
             continue;
         }
+
         if (c == '"') {
             return value;
         }
@@ -586,6 +708,59 @@ std::string WebBridge::getJsonString(const std::string& body, const std::string&
     }
 
     return "";
+}
+
+std::string WebBridge::routePath(const std::string& path) {
+    const size_t q = path.find('?');
+    if (q == std::string::npos) {
+        return path;
+    }
+    return path.substr(0, q);
+}
+
+std::string WebBridge::queryParam(const std::string& path, const std::string& key) {
+    const size_t q = path.find('?');
+    if (q == std::string::npos || q + 1 >= path.size()) {
+        return "";
+    }
+
+    const std::string query = path.substr(q + 1);
+    const std::string target = key + "=";
+
+    size_t start = 0;
+    while (start < query.size()) {
+        size_t end = query.find('&', start);
+        if (end == std::string::npos) {
+            end = query.size();
+        }
+
+        const std::string part = query.substr(start, end - start);
+        if (part.rfind(target, 0) == 0) {
+            return part.substr(target.size());
+        }
+
+        start = end + 1;
+    }
+
+    return "";
+}
+
+bool WebBridge::validSid(const std::string& sid) {
+    if (sid.empty() || sid.size() > 64) {
+        return false;
+    }
+
+    for (char c : sid) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
+            continue;
+        }
+        if (c == '-' || c == '_') {
+            continue;
+        }
+        return false;
+    }
+
+    return true;
 }
 
 void WebBridge::writeHttpResponse(int fd,
@@ -602,12 +777,11 @@ void WebBridge::writeHttpResponse(int fd,
     oss << "\r\n";
     oss << body;
 
-    std::string resp = oss.str();
-    sendAll(fd, resp);
+    sendAll(fd, oss.str());
 }
 
 void WebBridge::writeSseHeaders(int fd) {
-    std::string headers =
+    const std::string headers =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
         "Cache-Control: no-cache\r\n"
