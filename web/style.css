@@ -6,6 +6,8 @@
   --warn: #9f1239;
   --card: #fffdf6;
   --line: #d9d5c9;
+  --ok: #15803d;
+  --off: #94a3b8;
 }
 
 * {
@@ -22,11 +24,11 @@ body {
 .layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 340px 1fr;
 }
 
 .panel {
-  padding: 24px;
+  padding: 20px;
 }
 
 .left {
@@ -46,7 +48,7 @@ h1 {
 }
 
 .subtitle {
-  margin: 8px 0 20px;
+  margin: 8px 0 16px;
   color: #5f6b7a;
 }
 
@@ -57,6 +59,30 @@ h1 {
   padding: 14px;
   display: grid;
   gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot.online {
+  background: var(--ok);
+  box-shadow: 0 0 0 4px #dcfce7;
+}
+
+.dot.offline {
+  background: var(--off);
+  box-shadow: 0 0 0 4px #e2e8f0;
 }
 
 input,
@@ -86,8 +112,36 @@ button:disabled {
 }
 
 .status {
-  margin: 4px 0 0;
+  margin: 0;
   color: #334155;
+}
+
+.users-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#onlineCount {
+  background: #e2e8f0;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
+
+.users-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.users-list li {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  margin-bottom: 6px;
 }
 
 .messages {
@@ -97,7 +151,7 @@ button:disabled {
   padding: 12px;
   overflow-y: auto;
   min-height: 360px;
-  max-height: calc(100vh - 170px);
+  max-height: calc(100vh - 160px);
 }
 
 .msg {

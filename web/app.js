@@ -1,10 +1,13 @@
 const statusText = document.getElementById('statusText');
+const statusDot = document.getElementById('statusDot');
 const nicknameInput = document.getElementById('nickname');
 const connectBtn = document.getElementById('connectBtn');
 const disconnectBtn = document.getElementById('disconnectBtn');
 const messageList = document.getElementById('messageList');
 const messageInput = document.getElementById('messageInput');
 const sendForm = document.getElementById('sendForm');
+const onlineUsers = document.getElementById('onlineUsers');
+const onlineCount = document.getElementById('onlineCount');
 
 let connected = false;
 let currentNickname = '';
@@ -42,15 +45,41 @@ function setConnected(nextConnected, nickname) {
   connected = nextConnected;
   currentNickname = nextName;
 
-  if (connected === true) {
+  if (connected) {
     statusText.textContent = '已连接：' + (nextName || 'unknown');
+    statusDot.classList.remove('offline');
+    statusDot.classList.add('online');
   } else {
     statusText.textContent = '未连接';
+    statusDot.classList.remove('online');
+    statusDot.classList.add('offline');
   }
 
   connectBtn.disabled = connected;
   disconnectBtn.disabled = connected === false;
   messageInput.disabled = connected === false;
+}
+
+function renderUsers(users) {
+  while (onlineUsers.firstChild) {
+    onlineUsers.removeChild(onlineUsers.firstChild);
+  }
+
+  const list = Array.isArray(users) ? users : [];
+  onlineCount.textContent = String(list.length);
+
+  if (list.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = '暂无';
+    onlineUsers.appendChild(li);
+    return;
+  }
+
+  list.forEach(function (name) {
+    const li = document.createElement('li');
+    li.textContent = name;
+    onlineUsers.appendChild(li);
+  });
 }
 
 function parseJsonSafely(text) {
@@ -75,6 +104,14 @@ function ensureEventStream() {
       return;
     }
     setConnected(Boolean(data.connected), data.nickname || '');
+  });
+
+  eventSource.addEventListener('users', function (event) {
+    const data = parseJsonSafely(event.data);
+    if (data === null) {
+      return;
+    }
+    renderUsers(data.users || []);
   });
 
   eventSource.addEventListener('message', function (event) {
@@ -179,5 +216,6 @@ sendForm.addEventListener('submit', async function (event) {
 });
 
 setConnected(false, '');
+renderUsers([]);
 ensureEventStream();
-appendMessage('页面已就绪，先输入昵称并连接。会话ID: ' + sessionId, 'system');
+appendMessage('页面已就绪，先输入昵称并连接。', 'system');

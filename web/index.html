@@ -13,11 +13,23 @@
         <p class="subtitle">第四阶段 Web 最小演示</p>
 
         <div class="card">
+          <div class="status-row">
+            <span id="statusDot" class="dot offline"></span>
+            <span id="statusText" class="status">未连接</span>
+          </div>
+
           <label for="nickname">昵称</label>
           <input id="nickname" type="text" maxlength="24" placeholder="输入昵称" />
           <button id="connectBtn">连接后端</button>
           <button id="disconnectBtn" class="ghost">断开</button>
-          <p id="statusText" class="status">未连接</p>
+        </div>
+
+        <div class="card users-card">
+          <div class="users-head">
+            <strong>在线用户</strong>
+            <span id="onlineCount">0</span>
+          </div>
+          <ul id="onlineUsers" class="users-list"></ul>
         </div>
       </section>
 

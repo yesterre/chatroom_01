@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cerrno>
@@ -58,7 +59,7 @@ std::string resolveAssetPath(const std::string& relative_path) {
         std::string("../../") + relative_path
     };
 
-    if (!exe_dir.empty()) {
+    if (exe_dir.empty() == false) {
         candidates.push_back(exe_dir + "/" + relative_path);
         candidates.push_back(exe_dir + "/../" + relative_path);
         candidates.push_back(exe_dir + "/../../" + relative_path);
@@ -66,12 +67,16 @@ std::string resolveAssetPath(const std::string& relative_path) {
 
     for (const auto& path : candidates) {
         std::error_code ec;
-        if (std::filesystem::exists(path, ec) && !ec) {
+        if (std::filesystem::exists(path, ec) && ec.value() == 0) {
             return path;
         }
     }
 
     return relative_path;
+}
+
+std::string makeEventPacket(const std::string& event_name, const std::string& json_payload) {
+    return std::string("event: ") + event_name + "\n" + "data: " + json_payload + "\n\n";
 }
 }  // namespace
 
@@ -88,7 +93,7 @@ WebBridge::~WebBridge() {
 }
 
 bool WebBridge::start() {
-    if (!setupHttpListen()) {
+    if (setupHttpListen() == false) {
         return false;
     }
 
@@ -192,7 +197,7 @@ void WebBridge::acceptLoop() {
             if (errno == EINTR) {
                 continue;
             }
-            if (!running_) {
+            if (running_ == false) {
                 break;
             }
             std::cerr << "web bridge accept() failed" << std::endl;
@@ -218,7 +223,7 @@ std::shared_ptr<WebBridge::Session> WebBridge::getOrCreateSession(const std::str
 void WebBridge::handleHttpClient(int fd) {
     std::string raw = readAllRequest(fd);
     HttpRequest req;
-    if (!parseHttpRequest(raw, req)) {
+    if (parseHttpRequest(raw, req) == false) {
         writeHttpResponse(fd, 400, "Bad Request", "application/json",
                           "{\"ok\":false,\"error\":\"bad request\"}");
         close(fd);
@@ -256,7 +261,7 @@ void WebBridge::handleHttpClient(int fd) {
 
     if (req.method == "GET" && path == "/api/events") {
         const std::string sid = queryParam(req.path, "sid");
-        if (!validSid(sid)) {
+        if (validSid(sid) == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"invalid sid\"}");
             close(fd);
@@ -270,11 +275,13 @@ void WebBridge::handleHttpClient(int fd) {
             std::lock_guard<std::mutex> lock(session->mutex);
             session->sse_clients.push_back(fd);
 
-            const std::string initial = std::string("event: status\n") +
-                                        "data: {\"connected\":" + (session->connected ? "true" : "false") +
-                                        ",\"nickname\":\"" + jsonEscape(session->nickname) + "\"}\n\n";
-            sendAll(fd, initial);
+            std::string payload = std::string("{\"connected\":") + (session->connected ? "true" : "false") +
+                                  ",\"nickname\":\"" + jsonEscape(session->nickname) + "\"}";
+            sendAll(fd, makeEventPacket("status", payload));
         }
+
+        const std::vector<std::string> users = snapshotOnlineUsers();
+        sendAll(fd, makeEventPacket("users", usersJsonPayload(users)));
 
         char keep_alive;
         while (recv(fd, &keep_alive, 1, MSG_DONTWAIT) != 0) {
@@ -301,7 +308,7 @@ void WebBridge::handleHttpClient(int fd) {
         const std::string sid = getJsonString(req.body, "sid");
         const std::string nickname = getJsonString(req.body, "nickname");
 
-        if (!validSid(sid)) {
+        if (validSid(sid) == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"invalid sid\"}");
             close(fd);
@@ -317,7 +324,7 @@ void WebBridge::handleHttpClient(int fd) {
 
         std::string error;
         bool ok = connectBackend(sid, nickname, error);
-        if (!ok) {
+        if (ok == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"" + jsonEscape(error) + "\"}");
             close(fd);
@@ -334,7 +341,7 @@ void WebBridge::handleHttpClient(int fd) {
         const std::string sid = getJsonString(req.body, "sid");
         const std::string message = getJsonString(req.body, "message");
 
-        if (!validSid(sid)) {
+        if (validSid(sid) == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"invalid sid\"}");
             close(fd);
@@ -350,7 +357,7 @@ void WebBridge::handleHttpClient(int fd) {
 
         std::string error;
         bool ok = sendBackendMessage(sid, message, error);
-        if (!ok) {
+        if (ok == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"" + jsonEscape(error) + "\"}");
             close(fd);
@@ -364,7 +371,7 @@ void WebBridge::handleHttpClient(int fd) {
 
     if (req.method == "POST" && path == "/api/disconnect") {
         const std::string sid = getJsonString(req.body, "sid");
-        if (!validSid(sid)) {
+        if (validSid(sid) == false) {
             writeHttpResponse(fd, 400, "Bad Request", "application/json",
                               "{\"ok\":false,\"error\":\"invalid sid\"}");
             close(fd);
@@ -414,7 +421,7 @@ bool WebBridge::connectBackend(const std::string& sid, const std::string& nickna
         return false;
     }
 
-    if (!sendAll(fd, nickname)) {
+    if (sendAll(fd, nickname) == false) {
         close(fd);
         error = "failed to send nickname";
         return false;
@@ -437,7 +444,9 @@ bool WebBridge::connectBackend(const std::string& sid, const std::string& nickna
         old_reader.join();
     }
 
-    pushSse(session, "status", "{\"connected\":true,\"nickname\":\"" + jsonEscape(nickname) + "\"}");
+    pushSessionStatus(session);
+    pushSse(session, "system", "{\"text\":\"connected to backend\"}");
+    broadcastUsersSnapshot();
     return true;
 }
 
@@ -452,9 +461,12 @@ void WebBridge::disconnectBackend(const std::string& sid) {
         session = it->second;
     }
 
+    bool was_connected = false;
     std::thread reader;
     {
         std::lock_guard<std::mutex> lock(session->mutex);
+        was_connected = session->connected;
+
         if (session->backend_fd >= 0) {
             shutdown(session->backend_fd, SHUT_RDWR);
             close(session->backend_fd);
@@ -473,7 +485,11 @@ void WebBridge::disconnectBackend(const std::string& sid) {
         reader.join();
     }
 
-    pushSse(session, "status", "{\"connected\":false,\"nickname\":\"\"}");
+    if (was_connected) {
+        pushSessionStatus(session);
+        pushSse(session, "system", "{\"text\":\"disconnected\"}");
+        broadcastUsersSnapshot();
+    }
 }
 
 bool WebBridge::sendBackendMessage(const std::string& sid, const std::string& message, std::string& error) {
@@ -489,12 +505,12 @@ bool WebBridge::sendBackendMessage(const std::string& sid, const std::string& me
     }
 
     std::lock_guard<std::mutex> lock(session->mutex);
-    if (!session->connected || session->backend_fd < 0) {
+    if (session->connected == false || session->backend_fd < 0) {
         error = "not connected to backend";
         return false;
     }
 
-    if (!sendAll(session->backend_fd, message)) {
+    if (sendAll(session->backend_fd, message) == false) {
         safeClose(session->backend_fd);
         session->connected = false;
         session->nickname.clear();
@@ -513,7 +529,7 @@ void WebBridge::backendReadLoop(const std::string& sid, const std::shared_ptr<Se
         int local_fd = -1;
         {
             std::lock_guard<std::mutex> lock(session->mutex);
-            if (!session->connected || session->backend_fd < 0) {
+            if (session->connected == false || session->backend_fd < 0) {
                 break;
             }
             local_fd = session->backend_fd;
@@ -526,35 +542,46 @@ void WebBridge::backendReadLoop(const std::string& sid, const std::shared_ptr<Se
 
         buffer[n] = 0;
         std::string text(buffer);
-        while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+        while (text.empty() == false && (text.back() == '\n' || text.back() == '\r')) {
             text.pop_back();
         }
 
-        if (!text.empty()) {
+        if (text.empty()) {
+            continue;
+        }
+
+        if (startsWith(text, "[System]")) {
+            pushSse(session, "system", "{\"text\":\"" + jsonEscape(text) + "\"}");
+        } else {
             pushSse(session, "message", "{\"text\":\"" + jsonEscape(text) + "\"}");
         }
     }
 
+    bool was_connected = false;
     {
         std::lock_guard<std::mutex> lock(session->mutex);
+        was_connected = session->connected;
         safeClose(session->backend_fd);
         session->connected = false;
         session->nickname.clear();
     }
 
-    pushSse(session, "status", "{\"connected\":false,\"nickname\":\"\"}");
-    pushSse(session, "system", "{\"text\":\"backend disconnected\"}");
+    if (was_connected) {
+        pushSessionStatus(session);
+        pushSse(session, "system", "{\"text\":\"backend disconnected\"}");
+        broadcastUsersSnapshot();
+    }
 }
 
 void WebBridge::pushSse(const std::shared_ptr<Session>& session,
                         const std::string& event_name,
                         const std::string& json_payload) {
-    const std::string packet = "event: " + event_name + "\n" + "data: " + json_payload + "\n\n";
+    const std::string packet = makeEventPacket(event_name, json_payload);
 
     std::lock_guard<std::mutex> lock(session->mutex);
     auto it = session->sse_clients.begin();
     while (it != session->sse_clients.end()) {
-        if (*it < 0 || !sendAll(*it, packet)) {
+        if (*it < 0 || sendAll(*it, packet) == false) {
             if (*it >= 0) {
                 close(*it);
             }
@@ -562,6 +589,56 @@ void WebBridge::pushSse(const std::shared_ptr<Session>& session,
         } else {
             ++it;
         }
+    }
+}
+
+void WebBridge::pushSessionStatus(const std::shared_ptr<Session>& session) {
+    bool connected = false;
+    std::string nickname;
+
+    {
+        std::lock_guard<std::mutex> lock(session->mutex);
+        connected = session->connected;
+        nickname = session->nickname;
+    }
+
+    const std::string payload = std::string("{\"connected\":") + (connected ? "true" : "false") +
+                                ",\"nickname\":\"" + jsonEscape(nickname) + "\"}";
+    pushSse(session, "status", payload);
+}
+
+std::vector<std::string> WebBridge::snapshotOnlineUsers() {
+    std::vector<std::string> users;
+
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    for (const auto& pair : sessions_) {
+        const auto& session = pair.second;
+        std::lock_guard<std::mutex> session_lock(session->mutex);
+        if (session->connected && session->nickname.empty() == false) {
+            users.push_back(session->nickname);
+        }
+    }
+
+    std::sort(users.begin(), users.end());
+    users.erase(std::unique(users.begin(), users.end()), users.end());
+    return users;
+}
+
+void WebBridge::broadcastUsersSnapshot() {
+    const std::vector<std::string> users = snapshotOnlineUsers();
+    const std::string payload = usersJsonPayload(users);
+
+    std::vector<std::shared_ptr<Session>> sessions_copy;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions_copy.reserve(sessions_.size());
+        for (const auto& pair : sessions_) {
+            sessions_copy.push_back(pair.second);
+        }
+    }
+
+    for (const auto& session : sessions_copy) {
+        pushSse(session, "users", payload);
     }
 }
 
@@ -603,7 +680,7 @@ std::string WebBridge::readAllRequest(int fd) {
 }
 
 bool WebBridge::parseHttpRequest(const std::string& raw, HttpRequest& req) {
-    size_t line_end = raw.find("\r\n");
+    const size_t line_end = raw.find("\r\n");
     if (line_end == std::string::npos) {
         return false;
     }
@@ -615,7 +692,7 @@ bool WebBridge::parseHttpRequest(const std::string& raw, HttpRequest& req) {
         return false;
     }
 
-    size_t header_end = raw.find("\r\n\r\n");
+    const size_t header_end = raw.find("\r\n\r\n");
     if (header_end == std::string::npos) {
         req.body.clear();
         return true;
@@ -763,6 +840,27 @@ bool WebBridge::validSid(const std::string& sid) {
     return true;
 }
 
+bool WebBridge::startsWith(const std::string& text, const std::string& prefix) {
+    if (text.size() < prefix.size()) {
+        return false;
+    }
+    return text.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::string WebBridge::usersJsonPayload(const std::vector<std::string>& users) {
+    std::string json = "{\"users\":[";
+
+    for (size_t i = 0; i < users.size(); ++i) {
+        if (i > 0) {
+            json += ",";
+        }
+        json += "\"" + jsonEscape(users[i]) + "\"";
+    }
+
+    json += "],\"count\":" + std::to_string(users.size()) + "}";
+    return json;
+}
+
 void WebBridge::writeHttpResponse(int fd,
                                   int status,
                                   const std::string& status_text,
@@ -794,7 +892,7 @@ std::string WebBridge::loadFile(const std::string& path) {
     const std::string resolved_path = resolveAssetPath(path);
 
     std::ifstream in(resolved_path, std::ios::binary);
-    if (!in) {
+    if (in.is_open() == false) {
         return "";
     }
 
