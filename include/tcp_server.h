@@ -24,8 +24,8 @@ class TcpServer
         void broadcastMessage(const std::string& message, int sender_fd);  //向所有连接的客户端广播消息，参数是要广播的消息和发送者的 socket 文件描述符（可以用来排除发送者自己）
         void removeClient(int client_fd);  //从客户端列表中移除一个客户端连接，参数是客户端的 socket 文件描述符
 
-        void addEpollfd(int fd);  //将一个文件描述符添加到 epoll 监视列表中，参数是要添加的文件描述符
-        void removeEpollfd(int fd);  //将一个文件描述符从 epoll 监视列表中移除，参数是要移除的文件描述符
+        bool addEpollFd(int fd);  //将一个文件描述符添加到 epoll 监视列表中，参数是要添加的文件描述符
+        bool removeEpollFd(int fd);  //将一个文件描述符从 epoll 监视列表中移除，参数是要移除的文件描述符
 
     private:
         std::string ip_;  //保存服务端监听的 IP 地址。加下划线 _ 是常见成员变量命名习惯，表示它是类的内部成员。
@@ -40,6 +40,8 @@ class TcpServer
             std::string nickname;  //客户端的昵称
             bool registered;  //客户端是否已经注册了昵称
         };
+
+        static const int MAX_EVENTS = 1024;
 
         std::unordered_map<int, ClientInfo> clients_;  //保存所有在线客户端的信息，键是客户端 fd，值是该客户端对应的状态信息
         struct epoll_event events_[MAX_EVENTS];  //接收这一次有哪些 fd 真正就绪了

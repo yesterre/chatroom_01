@@ -1,7 +1,9 @@
 #include "tcp_server.h"
 
 #include <arpa/inet.h>  //为了用inet_pton()和htons()，它们和 IP 地址、端口转换有关
-#include <cstring>  //为了用 memset()，它可以把一块内存区域设置成全零或者全某个值
+#include <sys/socket.h>  //为了用 socket()、bind()、listen()、accept()、recv()、send() 等函数，这些都是 socket 编程的基础函数
+#include <netinet/in.h>  //为了用 sockaddr_in 结构体，这个结构体用来表示 IPv4 地址和端口
+#include <cstring> 
 #include <iostream>
 #include <unistd.h>  //为了用close()，在 Linux 下关闭文件描述符靠它
 
@@ -11,7 +13,7 @@
 因为在 Linux 里，合法文件描述符一般是非负数。所以 -1 常用来表示“当前还没有创建成功”。
 */
 TcpServer::TcpServer(const std::string& ip, int port)
-    : ip_(ip), port_(port), listen_fd_(-1)
+    : ip_(ip), port_(port), listen_fd_(-1), epoll_fd_(-1)
 {
 }
 
@@ -28,6 +30,11 @@ TcpServer::~TcpServer()
     if (listen_fd_ != -1) 
     { //如果监听 socket 创建过，就把它关掉
         close(listen_fd_);
+    }
+
+    if (epoll_fd_ != -1) 
+    { //如果 epoll 实例创建过，就把它关掉  epoll 实例本身也是一个 fd
+        close(epoll_fd_);
     }
 }
 
@@ -83,41 +90,54 @@ bool TcpServer::start()
         return false;
     }
 
-    addPollfd(listen_fd_); //把监听 socket 的文件描述符加入到 pollfd 列表里，表示我们要监听这个文件描述符的事件
+    /*可以把它想成创建一个“事件管理器”。
+    以后这个管理器就负责帮你记住：你关心哪些 fd  哪些 fd 发生了事件*/
+    epoll_fd_ = epoll_create1(0); //创建 epoll 实例，参数 0 表示默认选项，如果失败了，返回值会小于 0
+    if (epoll_fd_ < 0)
+    {
+        std::cerr << "epoll_create1() failed" << std::endl;
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return false;
+    }
+
+    if (!addEpollFd(listen_fd_)) //把监听 socket 的文件描述符加入到 epoll 实例里，表示我们要监听这个文件描述符的事件，如果失败了，返回 false
+    {
+        close(epoll_fd_);
+        epoll_fd_ = -1;
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return false;
+    }
 
     std::cout << "Server started at " << ip_ << ":" << port_ << std::endl;
     return true;
 }
 
-void TcpServer::addPollfd(int fd) 
+bool TcpServer::addEpollFd(int fd)  //把这个文件描述符加入到 epoll 实例里，表示我们要监听这个文件描述符的事件
 {
-    struct pollfd pfd;
-    pfd.fd = fd; //把这个文件描述符设置成我们要监听的那个
-    pfd.events = POLLIN; //我们要监听这个文件描述符的可读事件   监听 fd 可读：说明有新连接   客户端 fd 可读：说明有消息或者断开
-    pfd.revents = 0; //这个字段是用来存放 poll() 返回时告诉我们哪个事件发生了的，初始化成 0 就行了
+    epoll_event ev{};  //定义一个 epoll_event 结构体变量 ev，初始化成全零
+    ev.events = EPOLLIN;  //把 ev 的 events 字段设置成 EPOLLIN，表示我们要监听这个文件描述符的可读事件
+    ev.data.fd = fd;  //把 ev 的 data 字段的 fd 子字段设置成这个文件描述符，表示我们要监听这个文件描述符的事件时，关联它的数据就是这个文件描述符本身
 
-    poll_fds_.push_back(pfd); //把这个 pollfd 结构体加入到 poll_fds_ 列表里，表示我们要监听这个文件描述符的事件
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &ev) < 0)  //把这个 fd 加入 epoll 的关注列表
+    {
+        std::cerr << "epoll_ctl ADD failed, fd = " << fd << std::endl;
+        return false;
+    }
+
+    return true;
 }
 
-int TcpServer::findPollfdIndex(int fd) const
+bool TcpServer::removeEpollFd(int fd) 
 {
-    for (size_t i = 0; i < poll_fds_.size(); ++i) 
-    { //遍历 poll_fds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
-        if (poll_fds_[i].fd == fd) 
-        { //如果这个 pollfd 结构体的 fd 字段等于我们要找的那个文件描述符，就返回它在列表里的索引 i
-            return static_cast<int>(i);
-        }
+    if (epoll_ctl(epoll_fd_, EPOLL_CTL_DEL, fd, nullptr) < 0)
+    {
+        std::cerr << "epoll_ctl DEL failed, fd = " << fd << std::endl;
+        return false;
     }
-    return -1; //如果找不到，就返回 -1，表示没有找到
-}
 
-void TcpServer::removePollfd(int fd) 
-{
-    int index = findPollfdIndex(fd); //先找到这个文件描述符在 poll_fds_ 列表里的索引
-    if (index != -1) 
-    { //如果找到了，就把它从列表里移除掉
-        poll_fds_.erase(poll_fds_.begin() + index); //把这个索引位置的 pollfd 结构体从列表里移除掉
-    }
+    return true;
 }
 
 void TcpServer::handleNewConnection() 
@@ -134,7 +154,7 @@ void TcpServer::handleNewConnection()
         return;
     }
 
-    addPollfd(client_fd); //把这个新连接的文件描述符加入到 pollfd 列表里，表示我们要监听这个文件描述符的事件
+    addEpollFd(client_fd); //把这个新连接的文件描述符加入到 epoll 实例里，表示我们要监听这个文件描述符的事件
 
     char client_ip[INET_ADDRSTRLEN];  //INET_ADDRSTRLEN 是一个系统头文件里定义好的常量，表示IPv4 地址字符串表示所需要的最大长度
     inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);  //把 client_addr.sin_addr 里的 IPv4 地址，转换成字符串，写入 client_ip 数组中，数组长度是 INET_ADDRSTRLEN
@@ -254,7 +274,7 @@ void TcpServer::sendToClient(int client_fd, const std::string& message)
 
 void TcpServer::removeClient(int client_fd)
 {
-    removePollfd(client_fd); //先把这个客户端的文件描述符从 pollfd 列表里移除掉，表示我们不再监听这个文件描述符的事件了
+    removeEpollFd(client_fd); //先把这个客户端的文件描述符从 pollfd 列表里移除掉，表示我们不再监听这个文件描述符的事件了
     close(client_fd); //把这个客户端的 socket 连接关掉，释放系统资源
 
     clients_.erase(client_fd); //从 clients_ 中移除这个客户端的信息，表示它已经不在线了
@@ -272,31 +292,23 @@ void TcpServer::run()
 {
     while (true) 
     {
-        int ready_count = poll(poll_fds_.data(), poll_fds_.size(), -1); 
-        //调用 poll() 来等待事件发生，data 是 vector 里的数组首地址，size 告诉它一共要监控多少个 fd，以及 -1 表示无限等待
+        int ready_count = epoll_wait(epoll_fd_, events_, MAX_EVENTS, -1); 
+        //epoll_wait() 会阻塞等待，直到有事件发生或者出错了。它会把发生事件的文件描述符的信息写入 events_ 数组里，最多写 MAX_EVENTS 个。返回值是实际发生事件的数量，或者出错时返回 -1。
         if (ready_count < 0)
         {
-            std::cerr << "poll() failed" << std::endl;
-            break; //出错了，直接跳出循环，结束服务器运行
+            std::cerr << "epoll_wait() failed" << std::endl;
+            continue; //出错了，继续下一轮循环，重新等待事件发生，不要直接退出程序，因为可能只是暂时的错误，比如被信号打断了。
         }
 
-        size_t current_size = poll_fds_.size(); //把当前 poll_fds_ 列表的大小保存到 current_size 里，方便后续使用
-
-        for (size_t i = 0; i < current_size; ++i) //遍历 poll_fds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
+        for (int i = 0; i < ready_count; ++i)  //遍历的是 ready_count，不是所有客户端
         {
-            if (i >= poll_fds_.size())
-            {
-                break;
-            }
+            int current_fd = events_[i].data.fd;  //拿出这条就绪事件对应的是哪个 fd
 
-            if (!(poll_fds_[i].revents & POLLIN))  //如果这一项没有发生 POLLIN 事件  那就跳过，不处理它
+            if (!(events_[i].events & EPOLLIN))  //只关心可读
             {
                 continue;
             }
 
-            int current_fd = poll_fds_[i].fd;
-
-            //监听 fd 代表新连接、客户端 fd 代表消息
             if (current_fd == listen_fd_)
             {
                 handleNewConnection();
