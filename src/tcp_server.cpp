@@ -1,10 +1,9 @@
 #include "tcp_server.h"
 
 #include <arpa/inet.h>  //为了用inet_pton()和htons()，它们和 IP 地址、端口转换有关
+#include <cstring>  //为了用 memset()，它可以把一块内存区域设置成全零或者全某个值
 #include <iostream>
-#include <sys/socket.h>  ////为了用 socket 相关函数：socket()，bind()，listen()，accept()，send()，recv(), setsockopt()
 #include <unistd.h>  //为了用close()，在 Linux 下关闭文件描述符靠它
-#include <algorithm> 
 
 /*  构造函数
 把传进来的 ip 保存到 ip_，把传进来的 port 保存到 port_，把 listen_fd_ 初始化成 -1
@@ -12,9 +11,8 @@
 因为在 Linux 里，合法文件描述符一般是非负数。所以 -1 常用来表示“当前还没有创建成功”。
 */
 TcpServer::TcpServer(const std::string& ip, int port)
-    : ip_(ip), port_(port), listen_fd_(-1), max_fd_(-1)
+    : ip_(ip), port_(port), listen_fd_(-1)
 {
-    FD_ZERO(&master_set_); //初始化 master_set_，把所有位都清零，表示当前没有任何文件描述符被监听
 }
 
 /*  析构函数
@@ -22,11 +20,13 @@ TcpServer::TcpServer(const std::string& ip, int port)
 */
 TcpServer::~TcpServer() 
 {
-    for (const auto& pair : clients_) { //对于 clients_ 里的每一个客户端命名为 pair，执行下面的代码
+    for (auto& pair : clients_) 
+    { //对于 clients_ 里的每一个客户端命名为 pair，执行下面的代码
         close(pair.first); //把所有在线客户端的 socket 连接都关掉
     }
 
-    if (listen_fd_ != -1) {
+    if (listen_fd_ != -1) 
+    { //如果监听 socket 创建过，就把它关掉
         close(listen_fd_);
     }
 }
@@ -45,7 +45,13 @@ bool TcpServer::start()
     }
 
     int opt = 1;
-    setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)); //设置 socket 选项，允许地址重用，避免重启服务器时端口被占用的问题
+    if (setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)   //设置 socket 选项：SO_REUSEADDR 允许我们在同一端口上快速重启服务器，避免“Address already in use”错误
+    {
+        std::cerr << "setsockopt() failed" << std::endl;
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return false;
+    }
 
     /*构造一个 IPv4 地址结构体：sin_family：地址族，指定 IPv4    sin_port：端口号
     这里为什么要 htons(port_)？因为网络传输使用网络字节序，所以端口号要转换一下。所以写端口时一般要包一层 htons()！
@@ -53,37 +59,65 @@ bool TcpServer::start()
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port_);
-
-    /*把 IP 字符串转换成网络地址：把"127.0.0.1"这种字符串 IP，转换成系统能识别的二进制地址格式。*/
-    if (inet_pton(AF_INET, ip_.c_str(), &server_addr.sin_addr) <= 0) 
-    {
-        std::cerr << "inet_pton() failed" << std::endl;
-        return false;
-    }
+    server_addr.sin_addr.s_addr = inet_addr(ip.c_str()); //把 IP 字符串转换成网络字节序的整数，直接赋值给 sin_addr.s_addr
 
     /*绑定地址和端口：把这个 socket 绑定到：指定 IP 和指定端口
     */
     if (bind(listen_fd_, 
-            reinterpret_cast<sockaddr*>(&server_addr),
+            (sockaddr*)&server_addr,
             sizeof(server_addr)) < 0)
     {
         std::cerr << "bind() failed" << std::endl;
+        close(listen_fd_);
+        listen_fd_ = -1;
         return false;
     }
 
     /*开始监听：让这个 socket 进入监听状态，等待客户端连接。第二个参数 5 是 backlog，表示允许多少个客户端排队等待连接。
     */
-    if (listen(listen_fd_, 5) < 0) 
+    if (listen(listen_fd_, 10) < 0) 
     {
         std::cerr << "listen() failed" << std::endl;
+        close(listen_fd_);
+        listen_fd_ = -1;
         return false;
     }
 
-    FD_SET(listen_fd_, &master_set_); //把监听 socket 的文件描述符加入到 master_set_ 里，表示我们要监听这个文件描述符的可读事件
-    max_fd_ = listen_fd_; //更新 max_fd_，它表示当前 master_set_ 里最大的文件描述符值，select() 需要用到这个值来知道检查哪些文件描述符
+    addPollfd(listen_fd_); //把监听 socket 的文件描述符加入到 pollfd 列表里，表示我们要监听这个文件描述符的事件
 
     std::cout << "Server started at " << ip_ << ":" << port_ << std::endl;
     return true;
+}
+
+void TcpServer::addPollfd(int fd) 
+{
+    struct pollfd pfd;
+    pfd.fd = fd; //把这个文件描述符设置成我们要监听的那个
+    pfd.events = POLLIN; //我们要监听这个文件描述符的可读事件   监听 fd 可读：说明有新连接   客户端 fd 可读：说明有消息或者断开
+    pfd.revents = 0; //这个字段是用来存放 poll() 返回时告诉我们哪个事件发生了的，初始化成 0 就行了
+
+    poll_fds_.push_back(pfd); //把这个 pollfd 结构体加入到 poll_fds_ 列表里，表示我们要监听这个文件描述符的事件
+}
+
+int TcpServer::findPollfdIndex(int fd) const
+{
+    for (size_t i = 0; i < pollfds_.size(); ++i) 
+    { //遍历 pollfds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
+        if (poll_fds_[i].fd == fd) 
+        { //如果这个 pollfd 结构体的 fd 字段等于我们要找的那个文件描述符，就返回它在列表里的索引 i
+            return static_cast<int>(i);
+        }
+    }
+    return -1; //如果找不到，就返回 -1，表示没有找到
+}
+
+void TcpServer::removePollfd(int fd) 
+{
+    int index = findPollfdIndex(fd); //先找到这个文件描述符在 poll_fds_ 列表里的索引
+    if (index != -1) 
+    { //如果找到了，就把它从列表里移除掉
+        poll_fds_.erase(poll_fds_.begin() + index); //把这个索引位置的 pollfd 结构体从列表里移除掉
+    }
 }
 
 void TcpServer::handleNewConnection() 
