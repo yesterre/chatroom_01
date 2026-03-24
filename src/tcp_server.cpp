@@ -59,7 +59,7 @@ bool TcpServer::start()
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port_);
-    server_addr.sin_addr.s_addr = inet_addr(ip.c_str()); //把 IP 字符串转换成网络字节序的整数，直接赋值给 sin_addr.s_addr
+    server_addr.sin_addr.s_addr = inet_addr(ip_.c_str()); //把 IP 字符串转换成网络字节序的整数，直接赋值给 sin_addr.s_addr
 
     /*绑定地址和端口：把这个 socket 绑定到：指定 IP 和指定端口
     */
@@ -101,8 +101,8 @@ void TcpServer::addPollfd(int fd)
 
 int TcpServer::findPollfdIndex(int fd) const
 {
-    for (size_t i = 0; i < pollfds_.size(); ++i) 
-    { //遍历 pollfds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
+    for (size_t i = 0; i < poll_fds_.size(); ++i) 
+    { //遍历 poll_fds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
         if (poll_fds_[i].fd == fd) 
         { //如果这个 pollfd 结构体的 fd 字段等于我们要找的那个文件描述符，就返回它在列表里的索引 i
             return static_cast<int>(i);
@@ -126,13 +126,15 @@ void TcpServer::handleNewConnection()
     socklen_t client_len = sizeof(client_addr);
 
     int client_fd = accept(listen_fd_, 
-                            reinterpret_cast<sockaddr*>(&client_addr), 
-                            &client_len);
+                            (sockaddr*)&client_addr, 
+                            &client_len);  //accept() 返回一个新的文件描述符，代表这个新连接的 socket 连接，如果失败了，返回值会小于 0
     if (client_fd < 0)
     {
         std::cerr << "accept() failed" << std::endl;
         return;
     }
+
+    addPollfd(client_fd); //把这个新连接的文件描述符加入到 pollfd 列表里，表示我们要监听这个文件描述符的事件
 
     char client_ip[INET_ADDRSTRLEN];  //INET_ADDRSTRLEN 是一个系统头文件里定义好的常量，表示IPv4 地址字符串表示所需要的最大长度
     inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);  //把 client_addr.sin_addr 里的 IPv4 地址，转换成字符串，写入 client_ip 数组中，数组长度是 INET_ADDRSTRLEN
@@ -142,11 +144,6 @@ void TcpServer::handleNewConnection()
               << ", fd = " << client_fd << std::endl;  //ntohs() 是把网络字节序的端口号转换成主机字节序，方便打印出来看
 
     clients_[client_fd] = ClientInfo{client_fd, "", false}; //把这个新客户端的文件描述符和一个空昵称关联起来，存到 clients_ 里，表示它在线了，但还没有设置昵称
-    FD_SET(client_fd, &master_set_); //把这个新客户端的文件描述符加入到 master_set_ 里，表示我们要监听这个文件描述符的可读事件
-
-    if (client_fd > max_fd_) { //更新 max_fd_，它表示当前 master_set_ 里最大的文件描述符值，select() 需要用到这个值来知道检查哪些文件描述符
-        max_fd_ = client_fd;
-    }
 }
 
 void TcpServer::handleClientMessage(int client_fd)
@@ -187,6 +184,11 @@ void TcpServer::handleClientMessage(int client_fd)
     
     buffer[bytes_received] = '\0'; 
     std::string text = buffer; //把收到的消息转换成 std::string，方便后续处理
+
+    while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) //如果这个消息的最后一个字符是换行符或者回车符，就把它去掉，避免后续处理时出现问题
+    {
+        text.pop_back();
+    }
 
     if (!client.registered) 
     {  //如果这个客户端还没有注册过昵称，就把它收到的第一条消息当作昵称来处理
@@ -252,19 +254,12 @@ void TcpServer::sendToClient(int client_fd, const std::string& message)
 
 void TcpServer::removeClient(int client_fd)
 {
-    FD_CLR(client_fd, &master_set_); //从 master_set_ 里移除这个客户端的文件描述符，表示我们不再监听这个文件描述符的事件了
-    close(client_fd); //把这个客户端的 socket 连接关掉
+    removePollfd(client_fd); //先把这个客户端的文件描述符从 pollfd 列表里移除掉，表示我们不再监听这个文件描述符的事件了
+    close(client_fd); //把这个客户端的 socket 连接关掉，释放系统资源
 
     clients_.erase(client_fd); //从 clients_ 中移除这个客户端的信息，表示它已经不在线了
 
-    if (client_fd == max_fd_){
-        max_fd_ = listen_fd_; //如果这个客户端的文件描述符是当前 master_set_ 里最大的，就把 max_fd_ 更新成 listen_fd_，因为 listen_fd_ 是我们一直在监听的
-        for (const auto& pair : clients_) { //遍历 clients_ 里的每一个客户端命名为 fd，执行下面的代码
-            if (pair.first > max_fd_) { //如果这个客户端的文件描述符比当前 max_fd_ 还大，就更新 max_fd_
-                max_fd_ = pair.first;
-            }
-        }
-    }
+    clients_.erase(client_fd); // 从客户端状态表中移除
 }
 
 
@@ -277,28 +272,38 @@ void TcpServer::run()
 {
     while (true) 
     {
-        fd_set read_set = master_set_; //每次循环都要重新设置 read_set，因为 select() 会修改它
-
-        int ready_count = select(max_fd_ + 1, &read_set, nullptr, nullptr, nullptr); //select() 返回准备好的文件描述符数量，或者出错时返回 -1
+        int ready_count = poll(poll_fds_.data(), poll_fds_.size(), -1); 
+        //调用 poll() 来等待事件发生，data 是 vector 里的数组首地址，size 告诉它一共要监控多少个 fd，以及 -1 表示无限等待
         if (ready_count < 0)
         {
-            std::cerr << "select() failed" << std::endl;
-            continue; //出错了，继续下一轮循环
+            std::cerr << "poll() failed" << std::endl;
+            break; //出错了，直接跳出循环，结束服务器运行
         }
 
-        for(int fd = 0; fd <= max_fd_; ++fd) {
-            if(!FD_ISSET(fd, &read_set)) { //如果这个 fd 在本轮 select() 中不可读，就跳过
+        size_t current_size = poll_fds_.size(); //把当前 poll_fds_ 列表的大小保存到 current_size 里，方便后续使用
+
+        for (size_t i = 0; i < current_size; ++i) //遍历 poll_fds_ 列表里的每一个 pollfd 结构体，命名为 pfd，执行下面的代码
+        {
+            if (i >= poll_fds_.size())
+            {
+                break;
+            }
+
+            if (!(poll_fds_[i].revents & POLLIN))  //如果这一项没有发生 POLLIN 事件  那就跳过，不处理它
+            {
                 continue;
             }
 
-            --ready_count; //这个 fd 可读了，准备好的文件描述符数量减 1
-            /*每处理到一个真正就绪的 fd，就把“剩余未处理的就绪 fd 数量”减一。
-            一旦减到 0，说明这一轮所有就绪事件都处理完了，可以直接结束 for 循环 */
+            int current_fd = poll_fds_[i].fd;
 
-            if(fd == listen_fd_) { //如果这个文件描述符是监听 socket，说明有新的客户端连接请求了
-                handleNewConnection(); //处理这个新的连接请求
-            } else { //否则说明是某个客户端发来了消息
-                handleClientMessage(fd); //处理这个客户端的消息
+            //监听 fd 代表新连接、客户端 fd 代表消息
+            if (current_fd == listen_fd_)
+            {
+                handleNewConnection();
+            }
+            else
+            {
+                handleClientMessage(current_fd);
             }
         }
     }
